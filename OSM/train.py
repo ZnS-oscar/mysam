@@ -179,7 +179,8 @@ def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: 
             num_images = images.size(0)
 
             t1 = time.time()
-            pred_masks, _ = model(images, bboxes)
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+                pred_masks, _ = model(images, bboxes)
             t2 = time.time()
 
             for pred_mask, gt_mask in zip(pred_masks, gt_masks):
@@ -254,21 +255,21 @@ def train_sam(
             data_time.update(time.time() - end)
             images, bboxes, gt_masks = data
             batch_size = images.size(0)
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+                pred_masks, iou_predictions = model(images, bboxes)
 
-            pred_masks, iou_predictions = model(images, bboxes)
+                num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
+                loss_focal = torch.tensor(0., device=fabric.device)
+                loss_dice = torch.tensor(0., device=fabric.device)
+                loss_iou = torch.tensor(0., device=fabric.device)
+                for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
+                    n_mask_thisimg=len(pred_mask)
+                    batch_iou = calc_iou(pred_mask, gt_mask)
+                    loss_focal += focal_loss(pred_mask, gt_mask) 
+                    loss_dice += dice_loss(pred_mask, gt_mask) 
+                    loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
 
-            num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
-            loss_focal = torch.tensor(0., device=fabric.device)
-            loss_dice = torch.tensor(0., device=fabric.device)
-            loss_iou = torch.tensor(0., device=fabric.device)
-            for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
-                n_mask_thisimg=len(pred_mask)
-                batch_iou = calc_iou(pred_mask, gt_mask)
-                loss_focal += focal_loss(pred_mask, gt_mask) 
-                loss_dice += dice_loss(pred_mask, gt_mask) 
-                loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
-
-            loss_total = 20. * loss_focal + loss_dice + loss_iou
+                loss_total = 20. * loss_focal + loss_dice + loss_iou
             optimizer.zero_grad()
             fabric.backward(loss_total)
             optimizer.step()

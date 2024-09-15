@@ -1,10 +1,10 @@
 from box import Box
 
 config = {
-    "num_devices": 1 ,
+    "num_devices": 2 ,
     "batch_size": 4,
     "num_workers": 4,
-    "num_epochs": 300,
+    "num_epochs": 7,
     "eval_interval": 1,
     "out_dir": "./runs/train",
     "opt": {
