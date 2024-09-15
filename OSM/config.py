@@ -1,10 +1,10 @@
 from box import Box
 
 config = {
-    "num_devices": 1,
-    "batch_size": 2,
+    "num_devices": 1 ,
+    "batch_size": 4,
     "num_workers": 4,
-    "num_epochs": 3,
+    "num_epochs": 300,
     "eval_interval": 1,
     "out_dir": "./runs/train",
     "opt": {
@@ -15,8 +15,8 @@ config = {
         "warmup_steps": 400,
     },
     "model": {
-        "type": 'vit_h',  # vit_h, vit_l, vit_b, vit_tiny
-        "checkpoint": "weights/sam_vit_h.pth",
+        "type": 'vit_tiny',# vit_h, vit_l, vit_b, vit_tiny
+        "checkpoint": "weight/sam_hq_vit_tiny.pth",
         "freeze": {
             "image_encoder": True,
             "prompt_encoder": False,
@@ -24,13 +24,13 @@ config = {
         },
     },
     "dataset": {
-        "train": {
-            "root_dir": "./datasets/train_images",
-            "annotation_file": "./datasets/annotations/train_sam.json"
+       "train": {
+            "root_dir": "data_zoo/tiny_coco_dataset/tiny_coco/train2017",
+            "annotation_file": "data_zoo/tiny_coco_dataset/tiny_coco/annotations/instances_train2017.json"
         },
         "val": {
-            "root_dir": "./datasets/val_images",
-            "annotation_file": "./datasets/annotations/val_sam.json"
+            "root_dir": "data_zoo/tiny_coco_dataset/tiny_coco/val2017",
+            "annotation_file": "data_zoo/tiny_coco_dataset/tiny_coco/annotations/instances_val2017.json"
         }
     }
 }

@@ -13,14 +13,15 @@ class FocalLoss(nn.Module):
 
     def forward(self, inputs, targets, alpha=ALPHA, gamma=GAMMA, smooth=1):
         inputs = F.sigmoid(inputs)
-        inputs = torch.clamp(inputs, min=0, max=1)
+        inputs = torch.clamp(inputs, min=1e-8, max=1-1e-8)
         #flatten label and prediction tensors
         inputs = inputs.reshape(-1)
         targets = targets.reshape(-1)
 
-        BCE = F.binary_cross_entropy(inputs, targets, reduction='mean')
+        BCE = F.binary_cross_entropy(inputs, targets, reduction='none')
         BCE_EXP = torch.exp(-BCE)
         focal_loss = alpha * (1 - BCE_EXP)**gamma * BCE
+        focal_loss = focal_loss.mean()
 
         return focal_loss
 
@@ -32,7 +33,7 @@ class DiceLoss(nn.Module):
 
     def forward(self, inputs, targets, smooth=1):
         inputs = F.sigmoid(inputs)
-        inputs = torch.clamp(inputs, min=0, max=1)
+        inputs = torch.clamp(inputs, min=1e-8, max=1 - 1e-8)
         #flatten label and prediction tensors
         inputs = inputs.reshape(-1)
         targets = targets.reshape(-1)

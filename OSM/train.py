@@ -25,6 +25,7 @@ from imutils import perspective
 import datetime
 from pathlib import Path
 import math
+from lightning.fabric.strategies import DDPStrategy
 
 torch.set_float32_matmul_precision('high')
 
@@ -96,16 +97,41 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/va
     show_image[:, :, 0] = show_image[:, :, 0] + pred_mask_fuse  # R  (B + R = Pure)
 
     # draw boxes
-    'OBB'
+    # 'OBB'
+    # for box in bboxes[0]:
+    #     box = box.cpu().numpy().reshape(-1)  # (N,)  x1, y1(0-1), x2, y2(0-1), angle(0-180)
+    #     x_min, y_min, x_max, y_max,  = box[0], box[1], box[2], box[3], box[4]
+    #     p1 = np.array([x_min, y_min]) * image.shape[2]
+    #     p2 = np.array([x_max, y_min]) * image.shape[2]
+    #     p3 = np.array([x_max, y_max]) * image.shape[2]
+    #     p4 = np.array([x_min, y_max]) * image.shape[2]
+    #     center = np.array([(x_max + x_min) / 2, (y_max + y_min) / 2]) * image.shape[2]
+
+    #     angle = angle / 180 * math.pi
+    #     rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
+    #                                 [np.sin(angle), np.cos(angle)]])
+
+    #     p1 = np.dot(rotation_matrix, p1 - center) + center
+    #     p2 = np.dot(rotation_matrix, p2 - center) + center
+    #     p3 = np.dot(rotation_matrix, p3 - center) + center
+    #     p4 = np.dot(rotation_matrix, p4 - center) + center
+
+    #     cv2.line(show_image, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 255, 0), 2)  # G
+    #     cv2.line(show_image, (int(p2[0]), int(p2[1])), (int(p3[0]), int(p3[1])), (0, 255, 0), 2)
+    #     cv2.line(show_image, (int(p3[0]), int(p3[1])), (int(p4[0]), int(p4[1])), (0, 255, 0), 2)
+    #     cv2.line(show_image, (int(p4[0]), int(p4[1])), (int(p1[0]), int(p1[1])), (0, 255, 0), 2)
+
+    'HBB'
     for box in bboxes[0]:
         box = box.cpu().numpy().reshape(-1)  # (N,)  x1, y1(0-1), x2, y2(0-1), angle(0-180)
-        x_min, y_min, x_max, y_max, angle = box[0], box[1], box[2], box[3], box[4]
-        p1 = np.array([x_min, y_min]) * image.shape[2]
-        p2 = np.array([x_max, y_min]) * image.shape[2]
-        p3 = np.array([x_max, y_max]) * image.shape[2]
-        p4 = np.array([x_min, y_max]) * image.shape[2]
-        center = np.array([(x_max + x_min) / 2, (y_max + y_min) / 2]) * image.shape[2]
+        x_min, y_min, x_max, y_max = box[0], box[1], box[2], box[3]
+        p1 = np.array([x_min, y_min]) 
+        p2 = np.array([x_max, y_min]) 
+        p3 = np.array([x_max, y_max]) 
+        p4 = np.array([x_min, y_max]) 
+        center = np.array([(x_max + x_min) / 2, (y_max + y_min) / 2]) 
 
+        angle=0
         angle = angle / 180 * math.pi
         rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
                                     [np.sin(angle), np.cos(angle)]])
@@ -161,7 +187,8 @@ def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: 
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
 
                 # draw masks, boxes
-                draw_mask(images, bboxes, pred_mask, gt_mask, epoch, iter)
+                if fabric.device==1 or fabric.global_rank==0:#either only 1 gpu, or the 1st subprocess
+                    draw_mask(images, bboxes, pred_mask, gt_mask, epoch, iter)
 
                 batch_stats = smp.metrics.get_stats(
                     pred_mask,
@@ -235,9 +262,10 @@ def train_sam(
             loss_dice = torch.tensor(0., device=fabric.device)
             loss_iou = torch.tensor(0., device=fabric.device)
             for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
+                n_mask_thisimg=len(pred_mask)
                 batch_iou = calc_iou(pred_mask, gt_mask)
-                loss_focal += focal_loss(pred_mask, gt_mask, num_masks)
-                loss_dice += dice_loss(pred_mask, gt_mask, num_masks)
+                loss_focal += focal_loss(pred_mask, gt_mask) 
+                loss_dice += dice_loss(pred_mask, gt_mask) 
                 loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
 
             loss_total = 20. * loss_focal + loss_dice + loss_iou
@@ -287,7 +315,7 @@ def get_max_memory_allocated():
 def main(cfg: Box) -> None:
     fabric = L.Fabric(accelerator="auto",
                       devices=cfg.num_devices,
-                      strategy="auto",
+                      strategy=DDPStrategy(find_unused_parameters=True),
                       loggers=[TensorBoardLogger(cfg.out_dir, name="lightning-sam")])
     fabric.launch()
     fabric.seed_everything(1337 + fabric.global_rank)
@@ -299,9 +327,9 @@ def main(cfg: Box) -> None:
     model = Model(cfg)
     model.setup(fabric.device)
 
-    print(model)
+    # print(model)
     image = torch.randn(1, 3, 1024, 1024).to(fabric.device)
-    boxes = torch.randn(1, 5).to(fabric.device)
+    boxes = torch.randn(1, 4).to(fabric.device)
     boxes = [boxes]
     boxes = tuple(boxes)
     flops, params = profile(model, inputs=(image, boxes))
@@ -323,9 +351,9 @@ def main(cfg: Box) -> None:
             file.truncate(0)
 
     torch.cuda.reset_max_memory_allocated()
-
+    validate(fabric, model, val_data, epoch=-1)
     train_sam(cfg, fabric, model, optimizer, scheduler, train_data, val_data)
-    validate(fabric, model, val_data, epoch=0)
+    validate(fabric, model, val_data, epoch=-2)
 
     max_memory = get_max_memory_allocated()
 

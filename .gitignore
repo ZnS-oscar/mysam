@@ -1,0 +1,16 @@
+data_zoo
+weight
+*.pyc
+sss.py
+ttt.py
+*/__pycache__
+*/__pycache__/*
+__pycache__/*
+runs/*
+remove_sufix.py
+rrr.py
+trainpt.py
+deal_dataset/count_img.py
+OSM/dataset_obb.py
+OSM/sam/modeling/prompt_encoder_obb.py
+OSM/sam/modeling/image_encoder ori.py
