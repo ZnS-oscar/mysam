@@ -101,7 +101,7 @@ def load_datasets(cfg, img_size):
                                   num_workers=cfg.num_workers,
                                   collate_fn=collate_fn)
     val_dataloader = DataLoader(val,
-                                batch_size=cfg.batch_size,
+                                batch_size=1,
                                 shuffle=False,
                                 num_workers=cfg.num_workers,
                                 collate_fn=collate_fn)

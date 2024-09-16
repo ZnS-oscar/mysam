@@ -71,11 +71,11 @@ def show_prediction(image, masks, boxes):
     plt.axis('off')
     plt.show()
 def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/val/masks', show_image=None):
-    for img in images:
-        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, iter, save_path, show_image)
+    for sub,img in enumerate(images):
+        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path, show_image)
 
 
-def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/val/masks', show_image=None):
+def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='runs/val/masks', show_image=None):
     pred_mask = (pred_mask >= 0.5).float()
     h, w = pred_mask.shape[1], pred_mask.shape[2]
     pred_mask = pred_mask.cpu().numpy()
@@ -135,15 +135,15 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/va
         p4 = np.array([x_min, y_max]) 
         center = np.array([(x_max + x_min) / 2, (y_max + y_min) / 2]) 
 
-        angle=0
-        angle = angle / 180 * math.pi
-        rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
-                                    [np.sin(angle), np.cos(angle)]])
+        # angle=0
+        # angle = angle / 180 * math.pi
+        # rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
+        #                             [np.sin(angle), np.cos(angle)]])
 
-        p1 = np.dot(rotation_matrix, p1 - center) + center
-        p2 = np.dot(rotation_matrix, p2 - center) + center
-        p3 = np.dot(rotation_matrix, p3 - center) + center
-        p4 = np.dot(rotation_matrix, p4 - center) + center
+        # p1 = np.dot(rotation_matrix, p1 - center) + center
+        # p2 = np.dot(rotation_matrix, p2 - center) + center
+        # p3 = np.dot(rotation_matrix, p3 - center) + center
+        # p4 = np.dot(rotation_matrix, p4 - center) + center
 
         cv2.line(show_image, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 255, 0), 2)  # G
         cv2.line(show_image, (int(p2[0]), int(p2[1])), (int(p3[0]), int(p3[1])), (0, 255, 0), 2)
@@ -153,7 +153,7 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/va
     save_path = save_path + '_epoch' + str(epoch) + '/'
     if not os.path.exists(save_path):
         os.mkdir(save_path)
-    save_path = save_path + str(iter) + '.png'
+    save_path = save_path + str(iter) +'_'+str(sub)+ '.png'
     show_image = cv2.cvtColor(show_image.astype("uint8"), cv2.COLOR_RGB2BGR)
 
     'overlap'
@@ -172,7 +172,7 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/va
     # print('')
 
 # def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
-def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0):
+def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,iter:int=0):
     model.eval()
     ious = AverageMeter()
     f1_scores = AverageMeter()
@@ -193,7 +193,7 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 pred_mask = F.sigmoid(pred_mask)
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
                 # draw masks, boxes 
-                if (fabric.device==1 or fabric.global_rank==0) and iter<10:
+                if (fabric.device==1 or fabric.global_rank==0) and iter<(10/val_dataloader.batch_size):
                 #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
                         draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter)
 
@@ -212,20 +212,20 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
     inference_time = (t2 - t1) * 1000  # ms
     print('model inference time: ', inference_time, 'ms.')
     with open("runs/val/log.txt", 'a') as f:
-        f.write('Val: [' + str(epoch) + '] - ')
+        f.write('Val: [' + str(epoch) + '] - ' + f'[ {str(iter)} ] - ')
         f.write('Mean IoU: [' + str(torch.round(ious.avg, decimals=4)) + '] ')
         f.write('Inference Time: [' + str(round(inference_time, 3)) + 'ms]')
         f.write('\n')
         f.flush()
     f.close()
 
-    fabric.print(f'Validation [{epoch}]: Mean IoU: [{ious.avg:.4f}] -- Mean F1: [{f1_scores.avg:.4f}]')
+    fabric.print(f'Validation [{epoch},{iter}]: Mean IoU: [{ious.avg:.4f}] -- Mean F1: [{f1_scores.avg:.4f}]')
 
     fabric.print(f"Saving checkpoint to {cfg.out_dir}")
     state_dict = model.model.state_dict()
     if fabric.global_rank == 0:
         # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
-        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
+        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
     model.train()
 
 
@@ -247,20 +247,25 @@ def train_sam(
     for epoch in range(1, cfg.num_epochs):
         batch_time = AverageMeter()
         data_time = AverageMeter()
+        val_time=0
         focal_losses = AverageMeter()
         dice_losses = AverageMeter()
         iou_losses = AverageMeter()
         total_losses = AverageMeter()
+        
         end = time.time()
         validated = False
-
+        eval_interval_iter=int(len(train_dataloader.dataset)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)
         for iter, data in enumerate(train_dataloader):
-            if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
-            # if epoch % cfg.eval_interval == 0 and not validated:
-                validate(fabric, model, sam_lora,val_dataloader, epoch)
-                validated = True
-
             data_time.update(time.time() - end)
+            val_time=0
+            # if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
+            # if epoch % cfg.eval_interval == 0 and not validated:
+            if iter % eval_interval_iter==0 and iter!=0 and  epoch>1:
+                validate(fabric, model, sam_lora,val_dataloader, epoch,iter)
+                validated = True
+                val_time=time.time()-end
+            
             images, bboxes, gt_masks = data
             batch_size = images.size(0)
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
@@ -298,8 +303,9 @@ def train_sam(
             total_losses.update(loss_total.item(), batch_size)
 
             fabric.print(f'Epoch: [{epoch}][{iter+1}/{len(train_dataloader)}]'
-                         f' | Time [({batch_time.avg:.3f}s)]'
-                         f' | Data [({data_time.avg:.3f}s)]'
+                         f' | Time [({batch_time.sum-val_time:.3f}s)]'
+                         f' | Data [({data_time.sum:.3f}s)]'
+                         f' | valTime [({val_time:.3f})s]'
                          f' | Focal Loss [({focal_losses.avg:.4f})]'
                          f' | Dice Loss [({dice_losses.avg:.4f})]'
                          f' | IoU Loss [({iou_losses.avg:.4f})]'
@@ -372,9 +378,9 @@ def main(cfg: Box) -> None:
             file.truncate(0)
 
     torch.cuda.reset_max_memory_allocated()
-    validate(fabric, model, sam_lora,val_data, epoch=-1)
+    validate(fabric, model, sam_lora,val_data, epoch=-1,iter=0)
     train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
-    validate(fabric, model, sam_lora,val_data, epoch=-2)
+    validate(fabric, model, sam_lora,val_data, epoch=-2,iter=0)
 
     max_memory = get_max_memory_allocated()
 

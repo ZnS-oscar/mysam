@@ -1,16 +1,17 @@
 from box import Box
 
 config = {
-    "num_devices": 1 ,
+    "num_devices": 2 ,
     "batch_size": 1,
-    "num_workers": 4,
+    "num_workers": 6,
     "num_epochs": 7,
     "eval_interval": 1,
+    "eval_interval_iter_percent": 1,
     "out_dir": "./runs/train",
     "opt": {
         "learning_rate": 1e-3,  # 1e-3
         "weight_decay": 1e-4,
-        "decay_factor": 10,
+        "decay_factor": 5,
         "steps": [2000, 4000],
         "warmup_steps": 400,
     },
