@@ -26,7 +26,7 @@ import datetime
 from pathlib import Path
 import math
 from lightning.fabric.strategies import DDPStrategy
-
+from lora import LoRA_sam
 torch.set_float32_matmul_precision('high')
 
 def xywhangle_to_rext(x, y, w, h, angle):
@@ -70,6 +70,10 @@ def show_prediction(image, masks, boxes):
     show_mask(masks, plt.gca())
     plt.axis('off')
     plt.show()
+def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/val/masks', show_image=None):
+    for img in images:
+        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, iter, save_path, show_image)
+
 
 def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/val/masks', show_image=None):
     pred_mask = (pred_mask >= 0.5).float()
@@ -167,7 +171,8 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/va
     cv2.imwrite(save_path, show_image)
     # print('')
 
-def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
+# def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
+def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0):
     model.eval()
     ious = AverageMeter()
     f1_scores = AverageMeter()
@@ -183,13 +188,14 @@ def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: 
                 pred_masks, _ = model(images, bboxes)
             t2 = time.time()
 
+            
             for pred_mask, gt_mask in zip(pred_masks, gt_masks):
                 pred_mask = F.sigmoid(pred_mask)
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
-
-                # draw masks, boxes
-                if fabric.device==1 or fabric.global_rank==0:#either only 1 gpu, or the 1st subprocess
-                    draw_mask(images, bboxes, pred_mask, gt_mask, epoch, iter)
+                # draw masks, boxes 
+                if (fabric.device==1 or fabric.global_rank==0) and iter<10:
+                #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
+                        draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter)
 
                 batch_stats = smp.metrics.get_stats(
                     pred_mask,
@@ -204,7 +210,7 @@ def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: 
                 f1_scores.update(batch_f1, num_images)
 
     inference_time = (t2 - t1) * 1000  # ms
-    # print('model inference time: ', inference_time, 'ms.')
+    print('model inference time: ', inference_time, 'ms.')
     with open("runs/val/log.txt", 'a') as f:
         f.write('Val: [' + str(epoch) + '] - ')
         f.write('Mean IoU: [' + str(torch.round(ious.avg, decimals=4)) + '] ')
@@ -218,7 +224,8 @@ def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: 
     fabric.print(f"Saving checkpoint to {cfg.out_dir}")
     state_dict = model.model.state_dict()
     if fabric.global_rank == 0:
-        torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
+        # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
+        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
     model.train()
 
 
@@ -226,6 +233,7 @@ def train_sam(
     cfg: Box,
     fabric: L.Fabric,
     model: Model,
+    sam_lora:LoRA_sam,
     optimizer: _FabricOptimizer,
     scheduler: _FabricOptimizer,
     train_dataloader: DataLoader,
@@ -249,14 +257,21 @@ def train_sam(
         for iter, data in enumerate(train_dataloader):
             if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
             # if epoch % cfg.eval_interval == 0 and not validated:
-                validate(fabric, model, val_dataloader, epoch)
+                validate(fabric, model, sam_lora,val_dataloader, epoch)
                 validated = True
 
             data_time.update(time.time() - end)
             images, bboxes, gt_masks = data
             batch_size = images.size(0)
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                pred_masks, iou_predictions = model(images, bboxes)
+                try:
+                    pred_masks, iou_predictions = model(images, bboxes)
+                except RuntimeError as e:
+                    if "CUDA out of memory" in str(e):
+                        print("CUDA out of memory error caught!")
+                        # Optionally free up the cache to avoid further memory issues
+                        torch.cuda.empty_cache()
+                
 
                 num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
                 loss_focal = torch.tensor(0., device=fabric.device)
@@ -326,8 +341,13 @@ def main(cfg: Box) -> None:
 
     # with fabric.device:
     model = Model(cfg)
+    # put sam into lora
+    sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
+    model.model=sam_lora.sam
+
     model.setup(fabric.device)
 
+    
     # print(model)
     image = torch.randn(1, 3, 1024, 1024).to(fabric.device)
     boxes = torch.randn(1, 4).to(fabric.device)
@@ -352,9 +372,9 @@ def main(cfg: Box) -> None:
             file.truncate(0)
 
     torch.cuda.reset_max_memory_allocated()
-    validate(fabric, model, val_data, epoch=-1)
-    train_sam(cfg, fabric, model, optimizer, scheduler, train_data, val_data)
-    validate(fabric, model, val_data, epoch=-2)
+    validate(fabric, model, sam_lora,val_data, epoch=-1)
+    train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
+    validate(fabric, model, sam_lora,val_data, epoch=-2)
 
     max_memory = get_max_memory_allocated()
 

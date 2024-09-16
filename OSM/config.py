@@ -1,8 +1,8 @@
 from box import Box
 
 config = {
-    "num_devices": 2 ,
-    "batch_size": 4,
+    "num_devices": 1 ,
+    "batch_size": 1,
     "num_workers": 4,
     "num_epochs": 7,
     "eval_interval": 1,
@@ -15,13 +15,22 @@ config = {
         "warmup_steps": 400,
     },
     "model": {
-        "type": 'vit_tiny',# vit_h, vit_l, vit_b, vit_tiny
-        "checkpoint": "weight/sam_hq_vit_tiny.pth",
+        "type": 'vit_h',# vit_h, vit_l, vit_b, vit_tiny
+        "checkpoint": "weight/sam_hq_vit_h.pth",
         "freeze": {
             "image_encoder": True,
-            "prompt_encoder": False,
-            "mask_decoder": False,
+            "prompt_encoder": True,
+            "mask_decoder": True,
+            "lora":False # the lora should always be False
         },
+        "lora":{
+            'r':32,
+            'lora_alpha':16,
+            # 'target_modules':["query", "value"],
+            'lora_dropout':0.1,
+            'bias':'none',
+            # 'modules_to_save':["classifier"],
+        }
     },
     "dataset": {
        "train": {

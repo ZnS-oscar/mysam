@@ -9,20 +9,31 @@ class Model(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
+        self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)
 
     def setup(self, device):
-        self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)
+        # self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)
         self.model.to(device)
         self.model.train()
-        if self.cfg.model.freeze.image_encoder:
-            for param in self.model.image_encoder.parameters():
-                param.requires_grad = False
+        
+
+        '''image encoders already freeze in lora.py __init__(), normally do not uncomment these codes'''
+        # if self.cfg.model.freeze.image_encoder:
+        #     for param in self.model.image_encoder.parameters():
+        #         param.requires_grad = False
+        # if not self.cfg.model.freeze.lora:
+        #     for pname,param in zip(self.model.image_encoder.state_dict(),self.model.image_encoder.parameters()):
+        #         if 'linear_a_' in pname or 'linear_b_' in pname:
+        #             param.requires_grad = True
+
         if self.cfg.model.freeze.prompt_encoder:
             for param in self.model.prompt_encoder.parameters():
                 param.requires_grad = False
         if self.cfg.model.freeze.mask_decoder:
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
+        
+ 
 
     def forward(self, images, bboxes):
         _, _, H, W = images.shape
