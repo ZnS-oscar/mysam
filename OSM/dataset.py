@@ -10,6 +10,10 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 
 
+
+
+
+
 class COCODataset(Dataset):
 
     def __init__(self, root_dir, annotation_file, transform=None):
@@ -47,7 +51,7 @@ class COCODataset(Dataset):
 
         bboxes = np.stack(bboxes, axis=0)
         masks = np.stack(masks, axis=0)
-        return image, torch.tensor(bboxes), torch.tensor(masks).float()
+        return torch.tensor(image), torch.tensor(bboxes), torch.tensor(masks).float()
 
 
 def collate_fn(batch):
@@ -86,9 +90,54 @@ class ResizeAndPad:
 
         return image, masks, bboxes
 
+class JustResize:
+    def __init__(self, target_size):
+        self.target_size = target_size
+        
+        self.to_tensor = transforms.ToTensor()
+
+    def __call__(self, image, masks, bboxes):
+        
+        """
+        Resize image and adjust bounding boxes.
+        
+        Parameters:
+            image (numpy.ndarray): The input image.
+            bboxes (list of tuples): List of bounding boxes as (x_min, y_min, x_max, y_max).
+            target_shape (tuple): The target shape (width, height).
+
+        Returns:
+            resized_image (numpy.ndarray): Resized image.
+            new_bboxes (list of tuples): Adjusted bounding boxes.
+        """
+        # Get current dimensions
+        h, w = image.shape[:2]
+        new_w, new_h = self.target_size,self.target_size
+
+        # Calculate resize ratios
+        x_ratio = new_w / w
+        y_ratio = new_h / h
+
+        # Resize the image
+        resized_image = cv2.resize(image, (new_w, new_h))
+        resized_image= self.to_tensor(resized_image)
+
+        resized_masks=[cv2.resize(mask,(new_w, new_h)) for mask in masks]
+
+        # Adjust bounding boxes
+        new_bboxes = []
+        for bbox in bboxes:
+            x, y, w, h= bbox
+            new_x = int(x * x_ratio)
+            new_y = int(y * y_ratio)
+            new_w = int(w * x_ratio)
+            new_h = int(h * y_ratio)
+            new_bboxes.append((new_x, new_y, new_w, new_h))
+        return resized_image, resized_masks, new_bboxes
 
 def load_datasets(cfg, img_size):
-    transform = ResizeAndPad(img_size)
+    # transform = ResizeAndPad(img_size)
+    transform= JustResize(img_size)
     train = COCODataset(root_dir=cfg.dataset.train.root_dir,
                         annotation_file=cfg.dataset.train.annotation_file,
                         transform=transform)

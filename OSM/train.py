@@ -255,7 +255,7 @@ def train_sam(
         
         end = time.time()
         validated = False
-        eval_interval_iter=int(len(train_dataloader.dataset)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)
+        eval_interval_iter=int(len(train_dataloader.dataset)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
         for iter, data in enumerate(train_dataloader):
             data_time.update(time.time() - end)
             val_time=0

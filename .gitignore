@@ -14,3 +14,5 @@ deal_dataset/count_img.py
 OSM/dataset_obb.py
 OSM/sam/modeling/prompt_encoder_obb.py
 OSM/sam/modeling/image_encoder ori.py
+.vscode/launch.json
+OSM/datasetrdy.py

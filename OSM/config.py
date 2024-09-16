@@ -1,9 +1,9 @@
 from box import Box
 
 config = {
-    "num_devices": 2 ,
+    "num_devices": 1 ,
     "batch_size": 1,
-    "num_workers": 6,
+    "num_workers": 1,
     "num_epochs": 7,
     "eval_interval": 1,
     "eval_interval_iter_percent": 1,
