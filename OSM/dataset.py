@@ -11,7 +11,8 @@ from torch.utils.data import Dataset
 
 
 
-
+IMGMEAN=torch.tensor([0.485, 0.456, 0.406])
+IMGSTD=torch.tensor([0.229, 0.224, 0.225])
 
 
 class COCODataset(Dataset):
@@ -95,6 +96,9 @@ class JustResize:
         self.target_size = target_size
         
         self.to_tensor = transforms.ToTensor()
+        self.normalize=transforms.Normalize(
+                mean=IMGMEAN,
+                std=IMGSTD)
 
     def __call__(self, image, masks, bboxes):
         
@@ -121,6 +125,7 @@ class JustResize:
         # Resize the image
         resized_image = cv2.resize(image, (new_w, new_h))
         resized_image= self.to_tensor(resized_image)
+        resized_image=self.normalize(resized_image)
 
         resized_masks=[cv2.resize(mask,(new_w, new_h)) for mask in masks]
 

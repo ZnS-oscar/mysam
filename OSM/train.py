@@ -28,7 +28,8 @@ import math
 from lightning.fabric.strategies import DDPStrategy
 from lora import LoRA_sam
 torch.set_float32_matmul_precision('high')
-
+IMGMEAN=np.array([0.485, 0.456, 0.406])
+IMGSTD=np.array([0.229, 0.224, 0.225])
 def xywhangle_to_rext(x, y, w, h, angle):
     rect_xy = []
     rect_wh = []
@@ -160,6 +161,7 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='run
 
     image = torch.squeeze(image, dim=0).cpu()
     numpy_image = image.permute(1, 2, 0).numpy()
+    numpy_image=numpy_image*IMGSTD+IMGMEAN
     restored_image = (numpy_image * 255).astype(np.uint8)
     restored_image = cv2.cvtColor(restored_image, cv2.COLOR_RGB2BGR)
     # cv2.imwrite("restored_debug.png", restored_image)
@@ -193,7 +195,7 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 pred_mask = F.sigmoid(pred_mask)
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
                 # draw masks, boxes 
-                if (fabric.device==1 or fabric.global_rank==0) and iter<(10/val_dataloader.batch_size):
+                if (fabric.device==1 or fabric.global_rank==0) and iter<(10/val_dataloader.batch_size) :
                 #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
                         draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter)
 
