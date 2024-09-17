@@ -27,6 +27,7 @@ from pathlib import Path
 import math
 from lightning.fabric.strategies import DDPStrategy
 from lora import LoRA_sam
+from safetensors.torch import save_file
 torch.set_float32_matmul_precision('high')
 IMGMEAN=np.array([0.485, 0.456, 0.406])
 IMGSTD=np.array([0.229, 0.224, 0.225])
@@ -158,8 +159,9 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='run
     show_image = cv2.cvtColor(show_image.astype("uint8"), cv2.COLOR_RGB2BGR)
 
     'overlap'
-
+    
     image = torch.squeeze(image, dim=0).cpu()
+    image=image[:3,...]
     numpy_image = image.permute(1, 2, 0).numpy()
     numpy_image=numpy_image*IMGSTD+IMGMEAN
     restored_image = (numpy_image * 255).astype(np.uint8)
@@ -227,7 +229,9 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
     state_dict = model.model.state_dict()
     if fabric.global_rank == 0:
         # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
-        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
+        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
+        proj_weight={'image_encoder.patch_embed.proj.weight':model.model.image_encoder.patch_embed.proj.weight}
+        save_file(proj_weight, os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}-proj.safetensors"))
     model.train()
 
 
@@ -257,7 +261,7 @@ def train_sam(
         
         end = time.time()
         validated = False
-        eval_interval_iter=int(len(train_dataloader.dataset)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
+        eval_interval_iter=int((len(train_dataloader.dataset)+1)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
         for iter, data in enumerate(train_dataloader):
             data_time.update(time.time() - end)
             val_time=0
@@ -351,17 +355,20 @@ def main(cfg: Box) -> None:
     model = Model(cfg)
     # put sam into lora
     sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
-    model.model=sam_lora.sam
+    model.model=sam_lora.sam 
 
     model.setup(fabric.device)
+    for pname,param in zip(model.model.state_dict(),model.model.parameters()):
+        if param.requires_grad:
+            if 'linear_a_' not in pname and 'linear_b_' not in pname and pname!='image_encoder.patch_embed.proj.weight':
+                raise  ValueError(f'weight {pname} should be freeze')
 
-    
-    # print(model)
-    image = torch.randn(1, 3, 1024, 1024).to(fabric.device)
+   # print(model)
+    imagergbd = torch.randn(1, 4, 1024, 1024).to(fabric.device)
     boxes = torch.randn(1, 4).to(fabric.device)
     boxes = [boxes]
     boxes = tuple(boxes)
-    flops, params = profile(model, inputs=(image, boxes))
+    flops, params = profile(model, inputs=(imagergbd, boxes))
     print("FLOPs=", str(flops / 1e9) + '{}'.format("G"))
     print("params=", str(params / 1e6) + '{}'.format("M"))
 

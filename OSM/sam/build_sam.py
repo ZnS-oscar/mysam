@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-
+import torch.nn as nn
 from functools import partial
 
 from .modeling import ImageEncoderViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer, TinyViT
@@ -49,7 +49,7 @@ def build_sam_vit_t(checkpoint=None):
     vit_patch_size = 16
     image_embedding_size = image_size // vit_patch_size
     tiny_sam = Sam(
-            image_encoder=TinyViT(img_size=1024, in_chans=3, num_classes=1000,
+            image_encoder=TinyViT(img_size=1024, in_chans=4, num_classes=1000,
                 embed_dims=[64, 128, 160, 320],
                 depths=[2, 2, 6, 2],
                 num_heads=[2, 4, 5, 10],
@@ -114,6 +114,7 @@ def _build_sam(
     image_embedding_size = image_size // vit_patch_size
     sam = Sam(
         image_encoder=ImageEncoderViT(
+            in_chans=4,
             depth=encoder_depth,
             embed_dim=encoder_embed_dim,
             img_size=image_size,
@@ -152,5 +153,13 @@ def _build_sam(
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
+        rgb_weights = state_dict['image_encoder.patch_embed.proj.weight'] 
+        state_dict.pop('image_encoder.patch_embed.proj.weight')
         sam.load_state_dict(state_dict, strict=False)
+    
+    first_conv_layer = sam.image_encoder.patch_embed.proj
+    rgb_weights = first_conv_layer.weight[:, :3, :, :]  
+    depth_weights = rgb_weights[:, :1, :, :].clone()
+    new_weights = torch.cat([rgb_weights, depth_weights], dim=1)
+    first_conv_layer.weight = nn.Parameter(new_weights)
     return sam

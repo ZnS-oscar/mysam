@@ -4,9 +4,9 @@ config = {
     "num_devices": 1 ,
     "batch_size": 1,
     "num_workers": 1,
-    "num_epochs": 7,
-    "eval_interval": 1,
-    "eval_interval_iter_percent": 1,
+    "num_epochs": 10,
+    "eval_interval": 0.25,
+    "eval_interval_iter_percent": 0.01,
     "out_dir": "./runs/train",
     "opt": {
         "learning_rate": 1e-3,  # 1e-3
@@ -35,12 +35,16 @@ config = {
     },
     "dataset": {
        "train": {
-            "root_dir": "data_zoo/tiny_coco_dataset/tiny_coco/train2017",
-            "annotation_file": "data_zoo/tiny_coco_dataset/tiny_coco/annotations/instances_train2017.json"
+            "root_dir": "data_zoo/imagenet1k_val",
+            "depth_root_dir":"data_zoo/depth/val",
+            "annotation_file": "data_zoo/imagenet_anno/imagenet_val_fixsize384_tau0.15_N2.json",
+
         },
         "val": {
-            "root_dir": "data_zoo/tiny_coco_dataset/tiny_coco/val2017",
-            "annotation_file": "data_zoo/tiny_coco_dataset/tiny_coco/annotations/instances_val2017.json"
+            "root_dir": "data_zoo/imagenet1k_val",
+            "depth_root_dir":"data_zoo/depth/val",
+            "annotation_file": "data_zoo/imagenet_anno/imagenet_val_fixsize384_tau0.15_N2.json",
+
         }
     }
 }

@@ -85,7 +85,7 @@ class LoRA_sam(nn.Module):
         # freeze parameters of the image encoder
         for param in sam_model.image_encoder.parameters():
             param.requires_grad = False
-
+        sam_model.image_encoder.patch_embed.proj.weight.requires_grad=True
         for t_layer_i, blk in enumerate(sam_model.image_encoder.blocks):
             # if only lora on few layers
             if t_layer_i not in self.lora_layer:
@@ -132,7 +132,22 @@ class LoRA_sam(nn.Module):
         for w_B in self.B_weights:
             nn.init.zeros_(w_B.weight)
 
+    def get_lora_parameters(self):
+        """
+        Save the LoRA wieghts applied to the attention model as safetensors.
 
+        Arguments:
+            filenmame: Name of the file that will be saved
+        
+        Return:
+            None: Saves a safetensors file
+        """
+        num_layer = len(self.A_weights)
+        # sufix 03:d -> allows to have a name 1 instead of 001
+        a_tensors = {f"w_a_{i:03d}": self.A_weights[i].weight for i in range(num_layer)}
+        b_tensors = {f"w_b_{i:03d}": self.B_weights[i].weight for i in range(num_layer)}
+        merged_dict = {**a_tensors, **b_tensors}
+        return merged_dict
     def save_lora_parameters(self, filename: str):
         """
         Save the LoRA wieghts applied to the attention model as safetensors.

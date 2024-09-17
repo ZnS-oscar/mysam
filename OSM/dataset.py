@@ -13,12 +13,14 @@ from torch.utils.data import Dataset
 
 IMGMEAN=torch.tensor([0.485, 0.456, 0.406])
 IMGSTD=torch.tensor([0.229, 0.224, 0.225])
-
+DEPMEAN=torch.tensor([0.476])
+DEPSTD=torch.tensor([0.278])
 
 class COCODataset(Dataset):
 
-    def __init__(self, root_dir, annotation_file, transform=None):
+    def __init__(self, root_dir, depth_root_dir,annotation_file, transform=None):
         self.root_dir = root_dir
+        self.depth_root_dir=depth_root_dir
         self.transform = transform
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
@@ -36,6 +38,9 @@ class COCODataset(Dataset):
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
+        depth_path=os.path.join(self.depth_root_dir,image_info['file_name'].split('.')[0]+"_depth.jpg")
+        depth_image=cv2.imread(depth_path,0)
+
         ann_ids = self.coco.getAnnIds(imgIds=image_id)
         anns = self.coco.loadAnns(ann_ids)
         bboxes = []
@@ -48,11 +53,13 @@ class COCODataset(Dataset):
             masks.append(mask)
 
         if self.transform:
-            image, masks, bboxes = self.transform(image, masks, np.array(bboxes))
+            image, depth_image,masks, bboxes = self.transform(image, depth_image,masks, np.array(bboxes))
 
         bboxes = np.stack(bboxes, axis=0)
         masks = np.stack(masks, axis=0)
-        return torch.tensor(image), torch.tensor(bboxes), torch.tensor(masks).float()
+        rgbd=torch.concat([torch.tensor(image),torch.tensor(depth_image)],dim=0)
+
+        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float()
 
 
 def collate_fn(batch):
@@ -96,17 +103,21 @@ class JustResize:
         self.target_size = target_size
         
         self.to_tensor = transforms.ToTensor()
-        self.normalize=transforms.Normalize(
+        self.normalizeRGB=transforms.Normalize(
                 mean=IMGMEAN,
                 std=IMGSTD)
+        self.normalizeD=transforms.Normalize(
+                mean=DEPMEAN,
+                std=DEPSTD)
 
-    def __call__(self, image, masks, bboxes):
+    def __call__(self, image, depth_image,masks, bboxes):
         
         """
         Resize image and adjust bounding boxes.
         
         Parameters:
             image (numpy.ndarray): The input image.
+            depth_image (numpy.ndarray): the input depth image
             bboxes (list of tuples): List of bounding boxes as (x_min, y_min, x_max, y_max).
             target_shape (tuple): The target shape (width, height).
 
@@ -125,7 +136,13 @@ class JustResize:
         # Resize the image
         resized_image = cv2.resize(image, (new_w, new_h))
         resized_image= self.to_tensor(resized_image)
-        resized_image=self.normalize(resized_image)
+        resized_image=self.normalizeRGB(resized_image)
+
+        resized_depth_image = cv2.resize(depth_image, (new_w, new_h))
+        resized_depth_image= self.to_tensor(resized_depth_image)
+        resized_depth_image=self.normalizeD(resized_depth_image)
+
+
 
         resized_masks=[cv2.resize(mask,(new_w, new_h)) for mask in masks]
 
@@ -138,15 +155,17 @@ class JustResize:
             new_w = int(w * x_ratio)
             new_h = int(h * y_ratio)
             new_bboxes.append((new_x, new_y, new_w, new_h))
-        return resized_image, resized_masks, new_bboxes
+        return resized_image, resized_depth_image,resized_masks, new_bboxes
 
 def load_datasets(cfg, img_size):
     # transform = ResizeAndPad(img_size)
     transform= JustResize(img_size)
     train = COCODataset(root_dir=cfg.dataset.train.root_dir,
+                        depth_root_dir=cfg.dataset.train.depth_root_dir,
                         annotation_file=cfg.dataset.train.annotation_file,
                         transform=transform)
     val = COCODataset(root_dir=cfg.dataset.val.root_dir,
+                      depth_root_dir=cfg.dataset.val.depth_root_dir,
                       annotation_file=cfg.dataset.val.annotation_file,
                       transform=transform)
     train_dataloader = DataLoader(train,

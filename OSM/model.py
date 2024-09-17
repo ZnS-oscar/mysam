@@ -33,7 +33,6 @@ class Model(nn.Module):
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
         
- 
 
     def forward(self, images, bboxes):
         _, _, H, W = images.shape

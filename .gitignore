@@ -17,3 +17,5 @@ OSM/sam/modeling/image_encoder ori.py
 .vscode/launch.json
 OSM/datasetrdy.py
 depth_global_info.py
+movevalimg.py
+OSM/sam/build_sam ori.py
