@@ -12,6 +12,7 @@ from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
 from losses import DiceLoss
 from losses import FocalLoss
+from losses import BoundaryLoss
 from model import Model
 from torch.utils.data import DataLoader
 from utils import AverageMeter
@@ -72,12 +73,12 @@ def show_prediction(image, masks, boxes):
     show_mask(masks, plt.gca())
     plt.axis('off')
     plt.show()
-def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter, save_path='runs/val/masks', show_image=None):
+def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter, save_path='runs/val/masks', show_image=None):
     for sub,img in enumerate(images):
-        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path, show_image)
+        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path, show_image)
 
 
-def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='runs/val/masks', show_image=None):
+def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path='runs/val/masks', show_image=None):
     pred_mask = (pred_mask >= 0.5).float()
     h, w = pred_mask.shape[1], pred_mask.shape[2]
     pred_mask = pred_mask.cpu().numpy()
@@ -152,7 +153,7 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='run
         cv2.line(show_image, (int(p3[0]), int(p3[1])), (int(p4[0]), int(p4[1])), (0, 255, 0), 2)
         cv2.line(show_image, (int(p4[0]), int(p4[1])), (int(p1[0]), int(p1[1])), (0, 255, 0), 2)
 
-    save_path = save_path + '_epoch' + str(epoch) + '/'
+    save_path = save_path + '_epoch' + str(epoch) + '_iter'+ str(upiter)+'/'
     if not os.path.exists(save_path):
         os.mkdir(save_path)
     save_path = save_path + str(iter) +'_'+str(sub)+ '.png'
@@ -176,20 +177,20 @@ def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, iter, sub,save_path='run
     # print('')
 
 # def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
-def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,iter:int=0):
+def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,upiter:int=0):
     model.eval()
     ious = AverageMeter()
     f1_scores = AverageMeter()
 
     with torch.no_grad():
         for iter, data in enumerate(val_dataloader):
-            images, bboxes, gt_masks = data
+            images, bboxes, gt_masks,img_info = data
 
             num_images = images.size(0)
 
             t1 = time.time()
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                pred_masks, _ = model(images, bboxes)
+            # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            pred_masks, _ = model(images, bboxes)
             t2 = time.time()
 
             
@@ -199,7 +200,7 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 # draw masks, boxes 
                 if (fabric.device==1 or fabric.global_rank==0) and iter<(10/val_dataloader.batch_size) :
                 #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
-                        draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, iter)
+                    draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter)
 
                 batch_stats = smp.metrics.get_stats(
                     pred_mask,
@@ -216,22 +217,22 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
     inference_time = (t2 - t1) * 1000  # ms
     print('model inference time: ', inference_time, 'ms.')
     with open("runs/val/log.txt", 'a') as f:
-        f.write('Val: [' + str(epoch) + '] - ' + f'[ {str(iter)} ] - ')
+        f.write('Val: [' + str(epoch) + '] - ' + f'[ {str(upiter)} ] - ')
         f.write('Mean IoU: [' + str(torch.round(ious.avg, decimals=4)) + '] ')
         f.write('Inference Time: [' + str(round(inference_time, 3)) + 'ms]')
         f.write('\n')
         f.flush()
     f.close()
 
-    fabric.print(f'Validation [{epoch},{iter}]: Mean IoU: [{ious.avg:.4f}] -- Mean F1: [{f1_scores.avg:.4f}]')
+    fabric.print(f'Validation [{epoch},{upiter}]: Mean IoU: [{ious.avg:.4f}] -- Mean F1: [{f1_scores.avg:.4f}]')
 
     fabric.print(f"Saving checkpoint to {cfg.out_dir}")
     state_dict = model.model.state_dict()
     if fabric.global_rank == 0:
         # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
-        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
+        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
         proj_weight={'image_encoder.patch_embed.proj.weight':model.model.image_encoder.patch_embed.proj.weight}
-        save_file(proj_weight, os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{iter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}-proj.safetensors"))
+        save_file(proj_weight, os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}-proj.safetensors"))
     model.train()
 
 
@@ -249,6 +250,7 @@ def train_sam(
 
     focal_loss = FocalLoss()
     dice_loss = DiceLoss()
+    boundary_loss=BoundaryLoss()
 
     for epoch in range(1, cfg.num_epochs):
         batch_time = AverageMeter()
@@ -257,6 +259,8 @@ def train_sam(
         focal_losses = AverageMeter()
         dice_losses = AverageMeter()
         iou_losses = AverageMeter()
+        boundary_losses=AverageMeter()
+
         total_losses = AverageMeter()
         
         end = time.time()
@@ -267,37 +271,53 @@ def train_sam(
             val_time=0
             # if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
             # if epoch % cfg.eval_interval == 0 and not validated:
-            if iter % eval_interval_iter==0 and iter!=0 and  epoch>1:
+            if iter % eval_interval_iter==0 and iter!=0:
                 validate(fabric, model, sam_lora,val_dataloader, epoch,iter)
                 validated = True
                 val_time=time.time()-end
             
-            images, bboxes, gt_masks = data
+            images, bboxes, gt_masks,img_name = data
             batch_size = images.size(0)
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                try:
-                    pred_masks, iou_predictions = model(images, bboxes)
-                except RuntimeError as e:
-                    if "CUDA out of memory" in str(e):
-                        print("CUDA out of memory error caught!")
-                        # Optionally free up the cache to avoid further memory issues
-                        torch.cuda.empty_cache()
-                
-
+            # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            try:
+                pred_masks, iou_predictions = model(images, bboxes)
                 num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
-                loss_focal = torch.tensor(0., device=fabric.device)
-                loss_dice = torch.tensor(0., device=fabric.device)
-                loss_iou = torch.tensor(0., device=fabric.device)
-                for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
-                    n_mask_thisimg=len(pred_mask)
-                    batch_iou = calc_iou(pred_mask, gt_mask)
-                    loss_focal += focal_loss(pred_mask, gt_mask) 
-                    loss_dice += dice_loss(pred_mask, gt_mask) 
-                    loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    print("CUDA out of memory error caught!")
+                    # Optionally free up the cache to avoid further memory issues
+            # torch.cuda.empty_cache()               
+            loss_focal = torch.tensor(0., device=fabric.device)
+            loss_dice = torch.tensor(0., device=fabric.device)
+            loss_iou = torch.tensor(0., device=fabric.device)
+            loss_boundary=torch.tensor(0.,device=fabric.device)
+            for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
+                
+                if len(gt_mask)==0 or num_masks==0:
+                    print(f'0 found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
+                
+                    
+                if(len(pred_masks)!=len(gt_masks)):
+                    print(f'shape unequal found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
+                    
+
+                n_mask_thisimg=len(pred_mask)
+                batch_iou = calc_iou(pred_mask, gt_mask)
+                loss_focal += focal_loss(pred_mask, gt_mask) 
+                loss_dice += dice_loss(pred_mask, gt_mask) 
+                loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
+                # loss_boundary+=boundary_loss(pred_mask,gt_mask)
 
                 loss_total = 20. * loss_focal + loss_dice + loss_iou
+                # +loss_boundary
+                # torch.cuda.empty_cache() 
+                if torch.isnan(loss_total) or torch.isnan(loss_focal) or torch.isnan(loss_dice) or torch.isnan(loss_iou):
+                    print(f"nan found loss_total{loss_total} = 20. * loss_focal{loss_focal} + loss_dice{loss_dice} + loss_iou{loss_iou}")
+
+
             optimizer.zero_grad()
             fabric.backward(loss_total)
+            torch.nn.utils.clip_grad_norm_(model.model.parameters(),max_norm=2.0)
             optimizer.step()
             scheduler.step()
             batch_time.update(time.time() - end)
@@ -315,7 +335,10 @@ def train_sam(
                          f' | Focal Loss [({focal_losses.avg:.4f})]'
                          f' | Dice Loss [({dice_losses.avg:.4f})]'
                          f' | IoU Loss [({iou_losses.avg:.4f})]'
+                         f' | Boundary Loss [({boundary_losses.avg:.4f})]'
                          f' | Total Loss [({total_losses.avg:.4f})]')
+
+
 
 
 def configure_opt(cfg: Box, model: Model):
@@ -341,6 +364,7 @@ def get_max_memory_allocated():
 
 
 def main(cfg: Box) -> None:
+    print(f"------------Now {cfg.mode}--------------")
     fabric = L.Fabric(accelerator="auto",
                       devices=cfg.num_devices,
                       strategy=DDPStrategy(find_unused_parameters=True),
@@ -355,6 +379,8 @@ def main(cfg: Box) -> None:
     model = Model(cfg)
     # put sam into lora
     sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
+    if cfg.model.lora.checkpoint is not None:
+        sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
     model.model=sam_lora.sam 
 
     model.setup(fabric.device)
@@ -387,9 +413,10 @@ def main(cfg: Box) -> None:
             file.truncate(0)
 
     torch.cuda.reset_max_memory_allocated()
-    validate(fabric, model, sam_lora,val_data, epoch=-1,iter=0)
-    train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
-    validate(fabric, model, sam_lora,val_data, epoch=-2,iter=0)
+    # validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
+    if cfg.mode=='train':
+        train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
+        validate(fabric, model, sam_lora,val_data, epoch=-2,upiter=0)
 
     max_memory = get_max_memory_allocated()
 

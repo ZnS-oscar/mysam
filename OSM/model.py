@@ -9,7 +9,7 @@ class Model(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)
+        self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint,proj_checkpoint=cfg.model.proj_checkpoint)
 
     def setup(self, device):
         # self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)

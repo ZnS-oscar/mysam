@@ -59,13 +59,13 @@ class COCODataset(Dataset):
         masks = np.stack(masks, axis=0)
         rgbd=torch.concat([torch.tensor(image),torch.tensor(depth_image)],dim=0)
 
-        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float()
+        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float(), image_info['file_name']
 
 
 def collate_fn(batch):
-    images, bboxes, masks = zip(*batch)
+    images, bboxes, masks,image_name = zip(*batch)
     images = torch.stack(images)
-    return images, bboxes, masks
+    return images, bboxes, masks,image_name
 
 
 class ResizeAndPad:

@@ -7,43 +7,48 @@
 import torch
 import torch.nn as nn
 from functools import partial
-
+from safetensors import safe_open
 from .modeling import ImageEncoderViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer, TinyViT
 
 
-def build_sam_vit_h(checkpoint=None):
+def build_sam_vit_h(checkpoint=None,proj_checkpoint=None):
     return _build_sam(
         encoder_embed_dim=1280,
         encoder_depth=32,
         encoder_num_heads=16,
         encoder_global_attn_indexes=[7, 15, 23, 31],
         checkpoint=checkpoint,
+        proj_checkpoint=proj_checkpoint,
     )
 
 
 build_sam = build_sam_vit_h
 
 
-def build_sam_vit_l(checkpoint=None):
+def build_sam_vit_l(checkpoint=None,proj_checkpoint=None):
     return _build_sam(
         encoder_embed_dim=1024,
         encoder_depth=24,
         encoder_num_heads=16,
         encoder_global_attn_indexes=[5, 11, 17, 23],
         checkpoint=checkpoint,
+        proj_checkpoint=proj_checkpoint,
     )
 
 
-def build_sam_vit_b(checkpoint=None):
+def build_sam_vit_b(checkpoint=None,proj_checkpoint=None):
     return _build_sam(
         encoder_embed_dim=768,
         encoder_depth=12,
         encoder_num_heads=12,
         encoder_global_attn_indexes=[2, 5, 8, 11],
         checkpoint=checkpoint,
+        proj_checkpoint=proj_checkpoint,
     )
 
-def build_sam_vit_t(checkpoint=None):
+
+# todo proj_checkpoint=proj_checkpoint,
+def build_sam_vit_t(checkpoint=None,proj_checkpoint=None):
     prompt_embed_dim = 256
     image_size = 1024
     vit_patch_size = 16
@@ -107,6 +112,7 @@ def _build_sam(
     encoder_num_heads,
     encoder_global_attn_indexes,
     checkpoint=None,
+    proj_checkpoint=None,
 ):
     prompt_embed_dim = 256
     image_size = 1024
@@ -150,16 +156,23 @@ def _build_sam(
         pixel_std=[58.395, 57.12, 57.375],
     )
     sam.eval()
-    if checkpoint is not None:
+    if checkpoint is not None:# pop the proj anyway
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
         rgb_weights = state_dict['image_encoder.patch_embed.proj.weight'] 
         state_dict.pop('image_encoder.patch_embed.proj.weight')
         sam.load_state_dict(state_dict, strict=False)
-    
+
     first_conv_layer = sam.image_encoder.patch_embed.proj
-    rgb_weights = first_conv_layer.weight[:, :3, :, :]  
-    depth_weights = rgb_weights[:, :1, :, :].clone()
-    new_weights = torch.cat([rgb_weights, depth_weights], dim=1)
+    
+    
+    if proj_checkpoint is None:# if train, then generate proj
+        depth_weights = rgb_weights[:, :1, :, :].clone()
+        rgb_weights = first_conv_layer.weight[:, :3, :, :]  
+        new_weights = torch.cat([rgb_weights, depth_weights], dim=1)
+    else:# if test, given proj, load proj        
+        with safe_open(proj_checkpoint, framework="pt") as f:
+            saved_key='image_encoder.patch_embed.proj.weight'
+            new_weights=f.get_tensor(saved_key)
     first_conv_layer.weight = nn.Parameter(new_weights)
     return sam
