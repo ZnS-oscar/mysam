@@ -8,14 +8,14 @@ from pycocotools.coco import COCO
 from segment_anything.utils.transforms import ResizeLongestSide
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
-
+import random
 
 
 IMGMEAN=torch.tensor([0.485, 0.456, 0.406])
 IMGSTD=torch.tensor([0.229, 0.224, 0.225])
 DEPMEAN=torch.tensor([0.476])
 DEPSTD=torch.tensor([0.278])
-
+NOT_GOODDATA_CLSLIST=[]
 class COCODataset(Dataset):
 
     def __init__(self, root_dir, depth_root_dir,annotation_file, transform=None):
@@ -27,7 +27,8 @@ class COCODataset(Dataset):
 
         # Filter out image_ids without any annotations
         self.image_ids = [image_id for image_id in self.image_ids if len(self.coco.getAnnIds(imgIds=image_id)) > 0]
-
+                        #   and self.coco.loadImgs(image_id)[0]['file_name'].split('/')[0] in NOT_GOODDATA_CLSLIST ]
+        
     def __len__(self):
         return len(self.image_ids)
 
@@ -45,13 +46,22 @@ class COCODataset(Dataset):
         anns = self.coco.loadAnns(ann_ids)
         bboxes = []
         masks = []
-
-        for ann in anns:
-            x, y, w, h = ann['bbox']
-            bboxes.append([x, y, x + w, y + h])
-            mask = self.coco.annToMask(ann)
-            masks.append(mask)
-
+        
+        if len(anns)>50:
+            partial_dataset=random.sample(range(0,len(anns)), 50)
+            for annid,ann in enumerate(anns):
+                if annid not in partial_dataset:
+                    continue
+                x, y, w, h = ann['bbox']
+                bboxes.append([x, y, x + w, y + h])
+                mask = self.coco.annToMask(ann)
+                masks.append(mask)
+        else:
+            for annid,ann in enumerate(anns):
+                x, y, w, h = ann['bbox']
+                bboxes.append([x, y, x + w, y + h])
+                mask = self.coco.annToMask(ann)
+                masks.append(mask)
         if self.transform:
             image, depth_image,masks, bboxes = self.transform(image, depth_image,masks, np.array(bboxes))
 
@@ -179,3 +189,19 @@ def load_datasets(cfg, img_size):
                                 num_workers=cfg.num_workers,
                                 collate_fn=collate_fn)
     return train_dataloader, val_dataloader
+
+def load_test_datasets(cfg, img_size):
+    # transform = ResizeAndPad(img_size)
+    transform= JustResize(img_size)
+
+    test = COCODataset(root_dir=cfg.dataset.test.root_dir,
+                      depth_root_dir=cfg.dataset.test.depth_root_dir,
+                      annotation_file=cfg.dataset.test.annotation_file,
+                      transform=transform)
+
+    test_dataloader = DataLoader(test,
+                                batch_size=1,
+                                shuffle=False,
+                                num_workers=cfg.num_workers,
+                                collate_fn=collate_fn)
+    return test_dataloader

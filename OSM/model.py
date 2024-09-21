@@ -25,14 +25,27 @@ class Model(nn.Module):
         #     for pname,param in zip(self.model.image_encoder.state_dict(),self.model.image_encoder.parameters()):
         #         if 'linear_a_' in pname or 'linear_b_' in pname:
         #             param.requires_grad = True
-
+        #
         if self.cfg.model.freeze.prompt_encoder:
             for param in self.model.prompt_encoder.parameters():
                 param.requires_grad = False
         if self.cfg.model.freeze.mask_decoder:
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
+
         
+        for pname,param in zip(self.model.image_encoder.state_dict(),self.model.image_encoder.parameters()):
+            if 'blocks' in pname:
+                if self.cfg.model.freeze.unfreeze_image_encoder_layer is not None:
+                    if int(pname.split('.')[1]) in self.cfg.model.freeze.unfreeze_image_encoder_layer:
+                        param.requires_grad=True
+                if self.cfg.model.freeze.unfreeze_image_encoder_norm is not None:
+                    if int(pname.split('.')[1]) in self.cfg.model.freeze.unfreeze_image_encoder_norm and 'norm' in pname:
+                        param.requires_grad=True
+            if not self.cfg.model.freeze.preprocess_layers:
+                if 'blocks' not in pname:
+                    param.requires_grad=True
+
 
     def forward(self, images, bboxes):
         _, _, H, W = images.shape

@@ -22,3 +22,11 @@ OSM/sam/build_sam ori.py
 09180114/
 09181127/
 float16.py
+09181511/
+finetunePCB/
+09181127PCBresult/
+09190100/
+finaltrialof pcb/
+unfreeze_early_layers/
+imagenet1k_train_cocobox.json
+genmymask/imagenet_val_SAM.json
