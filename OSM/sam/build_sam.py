@@ -93,7 +93,29 @@ def build_sam_vit_t(checkpoint=None,proj_checkpoint=None):
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
+        # tiny_sam.load_state_dict(state_dict, strict=False)
+        
+    if proj_checkpoint== "inSAM":# means proj is in sam's ckpt, no need another pth
         tiny_sam.load_state_dict(state_dict, strict=False)
+        return tiny_sam
+
+    rgb_weights = state_dict['image_encoder.patch_embed.seq.0.c.weight'] 
+    state_dict.pop('image_encoder.patch_embed.seq.0.c.weight')
+    tiny_sam.load_state_dict(state_dict, strict=False)
+
+    first_conv_layer = tiny_sam.image_encoder.patch_embed.seq[0].c
+    
+    
+    if proj_checkpoint is None:# if train, then generate proj
+        depth_weights = rgb_weights[:, :1, :, :].clone()
+        new_weights = torch.cat([rgb_weights, depth_weights], dim=1)
+    else: # if test, given proj, load proj        
+        with safe_open(proj_checkpoint, framework="pt") as f:
+            saved_key='image_encoder.patch_embed.seq.0.c.weight'
+            new_weights=f.get_tensor(saved_key)
+
+
+    first_conv_layer.weight = nn.Parameter(new_weights)
     return tiny_sam
 
 
@@ -159,20 +181,27 @@ def _build_sam(
     if checkpoint is not None:# pop the proj anyway
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
-        rgb_weights = state_dict['image_encoder.patch_embed.proj.weight'] 
-        state_dict.pop('image_encoder.patch_embed.proj.weight')
+        
+    if proj_checkpoint== "inSAM":# means proj is in sam's ckpt, no need another pth
         sam.load_state_dict(state_dict, strict=False)
+        return sam
+    
+    rgb_weights = state_dict['image_encoder.patch_embed.proj.weight'] 
+    state_dict.pop('image_encoder.patch_embed.proj.weight')
+    sam.load_state_dict(state_dict, strict=False)
 
     first_conv_layer = sam.image_encoder.patch_embed.proj
     
     
     if proj_checkpoint is None:# if train, then generate proj
         depth_weights = rgb_weights[:, :1, :, :].clone()
-        rgb_weights = first_conv_layer.weight[:, :3, :, :]  
+        # rgb_weights = first_conv_layer.weight[:, :3, :, :]   # i made a mistake before here
         new_weights = torch.cat([rgb_weights, depth_weights], dim=1)
-    else:# if test, given proj, load proj        
+    else: # if test, given proj, load proj        
         with safe_open(proj_checkpoint, framework="pt") as f:
             saved_key='image_encoder.patch_embed.proj.weight'
             new_weights=f.get_tensor(saved_key)
+
+
     first_conv_layer.weight = nn.Parameter(new_weights)
     return sam

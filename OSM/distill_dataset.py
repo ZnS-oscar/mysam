@@ -17,17 +17,19 @@ IMGSTD=torch.tensor([0.229, 0.224, 0.225])
 DEPMEAN=torch.tensor([0.476])
 DEPSTD=torch.tensor([0.278])
 #pcb
-# DEPMEAN=torch.tensor([0.337])
-# DEPSTD=torch.tensor([0.248])
+# DEPMEAN=torch.tensor([0.776])
+# DEPSTD=torch.tensor([0.581])
 NOT_GOODDATA_CLSLIST=[]
-class COCODataset(Dataset):
+class COCODistillDataset(Dataset):
 
-    def __init__(self, root_dir, depth_root_dir,annotation_file, transform=None):
+    def __init__(self, root_dir, depth_root_dir,annotation_file,imgemb_dir, transform=None):
         self.root_dir = root_dir
         self.depth_root_dir=depth_root_dir
         self.transform = transform
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
+        self.imgemb_dir=imgemb_dir
+
 
         # Filter out image_ids without any annotations
         self.image_ids = [image_id for image_id in self.image_ids if len(self.coco.getAnnIds(imgIds=image_id)) > 0]
@@ -42,7 +44,10 @@ class COCODataset(Dataset):
         image_path = os.path.join(self.root_dir, image_info['file_name'])
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        #imagenet1k rgbd
         depth_path=os.path.join(self.depth_root_dir,image_info['file_name'].split('.')[0]+"_depth.jpg")
+        #pcb split
+        # depth_path=os.path.join(self.depth_root_dir,image_info['file_name'].split('.')[0]+".jpg")
         depth_image=cv2.imread(depth_path,0)
 
         ann_ids = self.coco.getAnnIds(imgIds=image_id)
@@ -71,14 +76,18 @@ class COCODataset(Dataset):
         bboxes = np.stack(bboxes, axis=0)
         masks = np.stack(masks, axis=0)
         rgbd=torch.concat([image,depth_image],dim=0)
+        imgemb_filepath=os.path.join(self.imgemb_dir,image_info['file_name'].split('.')[0]+'.npy')
+        imgemb = np.load(os.path.join(self.imgemb_dir,image_info['file_name'].split('.')[0]+'.npy')).squeeze()
 
-        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float(), image_info['file_name']
+
+        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float(),  torch.tensor(imgemb),image_info['file_name']
 
 
-def collate_fn(batch):
-    images, bboxes, masks,image_name = zip(*batch)
+def collate_fn_distill(batch):
+    images, bboxes, masks,imgemb,image_name = zip(*batch)
     images = torch.stack(images)
-    return images, bboxes, masks,image_name
+    imgemb = torch.stack(imgemb)
+    return images, bboxes, masks,imgemb,image_name
 
 
 class ResizeAndPad:
@@ -157,7 +166,8 @@ class JustResize:
         #pcb
         # resized_depth_image=torch.from_numpy(resized_depth_image).contiguous()
         # resized_depth_image=resized_depth_image.unsqueeze(0).to(dtype=torch.float32)
-        resized_depth_image=self.normalizeD(resized_depth_image)
+        # resized_depth_image=self.normalizeD(resized_depth_image)
+
 
 
         resized_masks=[cv2.resize(mask,(new_w, new_h)) for mask in masks]
@@ -173,41 +183,44 @@ class JustResize:
             new_bboxes.append((new_x, new_y, new_w, new_h))
         return resized_image, resized_depth_image,resized_masks, new_bboxes
 
-def load_datasets(cfg, img_size):
+def load_distill_datasets(cfg, img_size):
     # transform = ResizeAndPad(img_size)
     transform= JustResize(img_size)
-    train = COCODataset(root_dir=cfg.dataset.train.root_dir,
+    train = COCODistillDataset(root_dir=cfg.dataset.train.root_dir,
                         depth_root_dir=cfg.dataset.train.depth_root_dir,
                         annotation_file=cfg.dataset.train.annotation_file,
+                        imgemb_dir=cfg.dataset.train.imgemb_dir,
                         transform=transform)
-    val = COCODataset(root_dir=cfg.dataset.val.root_dir,
+    val = COCODistillDataset(root_dir=cfg.dataset.val.root_dir,
                       depth_root_dir=cfg.dataset.val.depth_root_dir,
                       annotation_file=cfg.dataset.val.annotation_file,
+                      imgemb_dir=cfg.dataset.val.imgemb_dir,
                       transform=transform)
     train_dataloader = DataLoader(train,
                                   batch_size=cfg.batch_size,
                                   shuffle=True,
                                   num_workers=cfg.num_workers,
-                                  collate_fn=collate_fn)
+                                  collate_fn=collate_fn_distill)
     val_dataloader = DataLoader(val,
-                                batch_size=1,# distill dataset
+                                batch_size=1,
                                 shuffle=False,
                                 num_workers=cfg.num_workers,
-                                collate_fn=collate_fn)
+                                collate_fn=collate_fn_distill)
     return train_dataloader, val_dataloader
 
 def load_test_datasets(cfg, img_size):
     # transform = ResizeAndPad(img_size)
     transform= JustResize(img_size)
 
-    test = COCODataset(root_dir=cfg.dataset.test.root_dir,
+    test = COCODistillDataset(root_dir=cfg.dataset.test.root_dir,
                       depth_root_dir=cfg.dataset.test.depth_root_dir,
                       annotation_file=cfg.dataset.test.annotation_file,
+                      imgemb_dir=cfg.dataset.test.imgemb_dir,
                       transform=transform)
 
     test_dataloader = DataLoader(test,
                                 batch_size=1,
                                 shuffle=False,
                                 num_workers=cfg.num_workers,
-                                collate_fn=collate_fn)
+                                collate_fn=collate_fn_distill)
     return test_dataloader

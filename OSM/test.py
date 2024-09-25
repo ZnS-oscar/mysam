@@ -300,13 +300,16 @@ def main(cfg: Box) -> None:
     # with fabric.device:
     model = Model(cfg)
     # put sam into lora
-    sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
-    if cfg.model.lora.checkpoint is not None:
-        sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
-    model.model=sam_lora.sam 
+    if cfg.model.lora.use_lora:
+        sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
+        if cfg.model.lora.checkpoint is not None:
+            sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
+        model.model=sam_lora.sam 
+    else:
+        sam_lora=None
 
     model.setup(fabric.device)
-    for pname,param in zip(model.model.state_dict(),model.model.parameters()):
+    for pname,param in model.model.named_parameters():
         if param.requires_grad:
             if 'linear_a_' not in pname and 'linear_b_' not in pname and pname!='image_encoder.patch_embed.proj.weight':
                 raise  ValueError(f'weight {pname} should be freeze')

@@ -12,7 +12,10 @@ from operator import itemgetter
 
 # Tools
 def kl_div(a,b): # q,p
-    return F.softmax(b, dim=1) * (F.log_softmax(b, dim=1) - F.log_softmax(a, dim=1))   
+    if a.shape[1]==1:
+        return (torch.abs(torch.sigmoid(a)-torch.sigmoid(b))>0.1).float()
+    else:
+        return F.softmax(b, dim=1) * (F.log_softmax(b, dim=1) - F.log_softmax(a, dim=1))   
 
 def one_hot2dist(seg):
     res = np.zeros_like(seg)
@@ -64,6 +67,7 @@ class ABL(nn.Module):
 
     def logits2boundary(self, logit):
         eps = 1e-5
+        # vis_img=torch.tensor([0,0])
         _, _, h, w = logit.shape
         max_N = (h*w) * self.max_N_ratio
         kl_ud = kl_div(logit[:, :, 1:, :], logit[:, :, :-1, :]).sum(1, keepdim=True)
@@ -171,9 +175,10 @@ class ABL(nn.Module):
         return out
 
     def forward(self, logits, target):
+        vis_img=torch.tensor([0,0])
         eps = 1e-10
-        logits=torch.sigmoid(logits)
-        logits = torch.clamp(logits, min=1e-7, max=1 - 1e-7)
+        # logits=torch.sigmoid(logits)
+        # logits = torch.clamp(logits, min=1e-7, max=1 - 1e-7)
         ph, pw = logits.size(2), logits.size(3)
         h, w = target.size(1), target.size(2)
 

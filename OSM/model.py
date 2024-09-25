@@ -18,14 +18,16 @@ class Model(nn.Module):
         
 
         '''image encoders already freeze in lora.py __init__(), normally do not uncomment these codes'''
-        # if self.cfg.model.freeze.image_encoder:
-        #     for param in self.model.image_encoder.parameters():
-        #         param.requires_grad = False
+        if self.cfg.model.freeze.image_encoder:
+            for param in self.model.image_encoder.parameters():
+                param.requires_grad = False
         # if not self.cfg.model.freeze.lora:
         #     for pname,param in zip(self.model.image_encoder.state_dict(),self.model.image_encoder.parameters()):
         #         if 'linear_a_' in pname or 'linear_b_' in pname:
         #             param.requires_grad = True
-        #
+        
+                           
+
         if self.cfg.model.freeze.prompt_encoder:
             for param in self.model.prompt_encoder.parameters():
                 param.requires_grad = False
@@ -34,17 +36,21 @@ class Model(nn.Module):
                 param.requires_grad = False
 
         
-        for pname,param in zip(self.model.image_encoder.state_dict(),self.model.image_encoder.parameters()):
-            if 'blocks' in pname:
+        for pname,param in self.model.image_encoder.named_parameters():
+            if 'blocks.' in pname or 'layers.' in pname:
                 if self.cfg.model.freeze.unfreeze_image_encoder_layer is not None:
                     if int(pname.split('.')[1]) in self.cfg.model.freeze.unfreeze_image_encoder_layer:
                         param.requires_grad=True
                 if self.cfg.model.freeze.unfreeze_image_encoder_norm is not None:
-                    if int(pname.split('.')[1]) in self.cfg.model.freeze.unfreeze_image_encoder_norm and 'norm' in pname:
+                    if int(pname.split('.')[1]) in self.cfg.model.freeze.unfreeze_image_encoder_norm and ('.norm' in pname or '.bn' in pname):
                         param.requires_grad=True
             if not self.cfg.model.freeze.preprocess_layers:
-                if 'blocks' not in pname:
+                if ('blocks.' not in pname and 'layers.' not in pname) and 'linear_a_' not in pname and  'linear_b_' not in pname:
                     param.requires_grad=True
+            if not self.cfg.model.freeze.lora:
+                if 'linear_a_' in pname or 'linear_b_' in pname:
+                    param.requires_grad = True
+             
 
 
     def forward(self, images, bboxes):
@@ -80,3 +86,7 @@ class Model(nn.Module):
 
     def get_predictor(self):
         return SamPredictor(self.model)
+    # def get_imgemb(self,images):
+    #     image_embeddings = self.model.image_encoder(images)
+    #     return image_embeddings
+

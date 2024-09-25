@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 from box import Box
 from config import cfg
-from dataset import load_datasets
 from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
 from losses import DiceLoss
@@ -30,9 +29,15 @@ from lightning.fabric.strategies import DDPStrategy
 from lora import LoRA_sam
 from safetensors.torch import save_file
 from abl import ABL
+from torch.utils.data import Dataset, DataLoader
+from distill_dataset import load_distill_datasets
+from tensorboardX import SummaryWriter  
+from torch import distributed as dist
 torch.set_float32_matmul_precision('high')
 IMGMEAN=np.array([0.485, 0.456, 0.406])
 IMGSTD=np.array([0.229, 0.224, 0.225])
+
+
 def xywhangle_to_rext(x, y, w, h, angle):
     rect_xy = []
     rect_wh = []
@@ -74,26 +79,27 @@ def show_prediction(image, masks, boxes):
     show_mask(masks, plt.gca())
     plt.axis('off')
     plt.show()
-# def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter, save_path='runs/val/masks', show_image=None):
-#     for sub,img in enumerate(images):
-#         draw_mask(img, bboxes[sub], pred_mask[sub], gt_mask[sub], epoch, upiter,iter, sub,save_path, show_image)
+def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter, save_path='runs/val/masks', show_image=None):
+    for sub,img in enumerate(images):
+        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path, show_image)
 
 
-def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path='runs/val/masks', show_image=None,img_info=""):
-    pred_masks = (pred_masks >= 0.5).float()
-    h, w = pred_masks.shape[1], pred_masks.shape[2]
-    pred_masks = pred_masks.cpu().numpy()
-    gt_masks = gt_masks.cpu().numpy()
+def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path='runs/val/masks', show_image=None):
+    pred_mask = (pred_mask >= 0.5).float()
+    h, w = pred_mask.shape[1], pred_mask.shape[2]
+    pred_mask = pred_mask.cpu().numpy()
+    gt_mask = gt_mask.cpu().numpy()
 
     # fuse
     # a, b, c, d = np.max(pred_mask), np.min(pred_mask), np.max(gt_mask), np.min(gt_mask)  # 1, 0, 1, 0
     pred_mask_fuse, gt_mask_fuse = np.zeros((h, w)), np.zeros((h, w))
-    for i in range(len(pred_masks)):
-        pred_mask_fuse += pred_masks[i]
-    for i in range(len(gt_masks)):
-        gt_mask_fuse += gt_masks[i]
+    for i in range(len(pred_mask)):
+        pred_mask_fuse += pred_mask[i]
+    for i in range(len(gt_mask)):
+        gt_mask_fuse += gt_mask[i]
     pred_mask_fuse[pred_mask_fuse > 0] = 1
     gt_mask_fuse[gt_mask_fuse > 0] = 1
+
     if show_image == None:
         show_image = np.zeros((h, w, 3))
 
@@ -156,7 +162,7 @@ def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path=
     save_path = save_path + '_epoch' + str(epoch) + '_iter'+ str(upiter)+'/'
     if not os.path.exists(save_path):
         os.mkdir(save_path)
-    save_path = save_path + str(upiter) +'_'+str(iter)+img_info.split('.')[0]+ '.png'
+    save_path = save_path + str(iter) +'_'+str(sub)+ '.png'
     show_image = cv2.cvtColor(show_image.astype("uint8"), cv2.COLOR_RGB2BGR)
 
     'overlap'
@@ -176,10 +182,6 @@ def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path=
     cv2.imwrite(save_path, show_image)
     # print('')
 
-
-
-
-
 # def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
 def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,upiter:int=0):
     model.eval()
@@ -187,7 +189,6 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
     f1_scores = AverageMeter()
 
     with torch.no_grad():
-        sum_time=0
         for iter, data in enumerate(val_dataloader):
             if iter>50:
                 break
@@ -205,10 +206,10 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 pred_mask = F.sigmoid(pred_mask)
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
                 # draw masks, boxes 
-                if (fabric.device==1 or fabric.global_rank==0) and iter<(30/val_dataloader.batch_size) :
-                    # and iter<(30/val_dataloader.batch_size)
+                if (fabric.device==1 or fabric.global_rank==0) and iter>(10/val_dataloader.batch_size) \
+                            and iter<(25/val_dataloader.batch_size) :
                 #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
-                    draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter,img_info=img_info[0])
+                    draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter)
 
                 batch_stats = smp.metrics.get_stats(
                     pred_mask,
@@ -222,9 +223,8 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 ious.update(batch_iou, num_images)
                 f1_scores.update(batch_f1, num_images)
 
-            inference_time = (t2 - t1) * 1000  # ms
-            sum_time+=(t2 - t1)
-            # print('model inference time: ', inference_time, 'ms.','   total time',sum_time,'s')
+    inference_time = (t2 - t1) * 1000  # ms
+    print('model inference time: ', inference_time, 'ms.')
     with open("runs/val/log.txt", 'a') as f:
         f.write('Val: [' + str(epoch) + '] - ' + f'[ {str(upiter)} ] - ')
         f.write('Mean IoU: [' + str(torch.round(ious.avg, decimals=4)) + '] ')
@@ -242,123 +242,13 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
         sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch_{epoch-1:02d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
         # proj_weight={'image_encoder.patch_embed.proj.weight':model.model.image_encoder.patch_embed.proj.weight}
         # save_file(proj_weight, os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}-proj.safetensors"))
-        torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
+        torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_f1{f1_scores.avg:.2f}-ckpt.pth"))
         # print(model.model.image_encoder.patch_embed.proj.weight.shape)
-        # return os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-ckpt.pth"),os.path.join(cfg.out_dir, f"epoch_{epoch-1:02d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors")
     model.train()
 
-
-def train_sam(
-    cfg: Box,
-    fabric: L.Fabric,
-    model: Model,
-    sam_lora:LoRA_sam,
-    optimizer: _FabricOptimizer,
-    scheduler: _FabricOptimizer,
-    train_dataloader: DataLoader,
-    val_dataloader: DataLoader,
-):
-    """The SAM training loop."""
-
-    focal_loss = FocalLoss()
-    dice_loss = DiceLoss()
-    boundary_loss=ABL()
-
-    for epoch in range(1, cfg.num_epochs+1):
-        batch_time = AverageMeter()
-        data_time = AverageMeter()
-        val_time=0
-        focal_losses = AverageMeter()
-        dice_losses = AverageMeter()
-        iou_losses = AverageMeter()
-        boundary_losses=AverageMeter()
-
-        total_losses = AverageMeter()
-        
-        end = time.time()
-        validated = False
-        eval_interval_iter=int((len(train_dataloader.dataset)+1)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
-        for iter, data in enumerate(train_dataloader):
-            data_time.update(time.time() - end)
-            val_time=0
-            # if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
-            # if epoch % cfg.eval_interval == 0 and not validated:
-            if iter % eval_interval_iter==0 and iter!=0:
-                validate(fabric, model, sam_lora,val_dataloader, epoch,iter)
-                validated = True
-                val_time=time.time()-end
-            
-            images, bboxes, gt_masks,img_name = data
-            batch_size = images.size(0)
-            # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-            try:
-                pred_masks, iou_predictions = model(images, bboxes)
-                num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
-            except RuntimeError as e:
-                if "CUDA out of memory" in str(e):
-                    print("CUDA out of memory error caught!")
-                    # Optionally free up the cache to avoid further memory issues
-            # torch.cuda.empty_cache()               
-            loss_focal = torch.tensor(0., device=fabric.device)
-            loss_dice = torch.tensor(0., device=fabric.device)
-            loss_iou = torch.tensor(0., device=fabric.device)
-            loss_boundary=torch.tensor(0.,device=fabric.device)
-            for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
-                
-                # if len(gt_mask)==0 or num_masks==0:
-                #     print(f'0 found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
-                
-                    
-                # if(len(pred_masks)!=len(gt_masks)):
-                #     print(f'shape unequal found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
-                    
-
-                n_mask_thisimg=len(pred_mask)
-                batch_iou = calc_iou(pred_mask, gt_mask)
-                loss_focal += focal_loss(pred_mask, gt_mask) 
-                loss_dice += dice_loss(pred_mask, gt_mask) 
-                loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') 
-                lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask)
-                loss_boundary+=lb if lb is not None else 0
-                if lb is None:
-                    with open("runs/val/log.txt", 'a') as f:
-                        f.write(f"found loss boundary is None:{img_name}\n")
-                        f.flush()
-                    f.close()
-                
-
-                
-            loss_total = 20. * loss_focal + loss_dice + loss_iou/num_masks+loss_boundary/num_masks
-                # +loss_boundary
-                # torch.cuda.empty_cache() 
-            # if torch.isnan(loss_total) or torch.isnan(loss_focal) or torch.isnan(loss_dice) or torch.isnan(loss_iou):
-            #     print(f"nan found loss_total{loss_total} = 20. * loss_focal{loss_focal} + loss_dice{loss_dice} + loss_iou{loss_iou}")
-
-
-            optimizer.zero_grad()
-            fabric.backward(loss_total)
-            torch.nn.utils.clip_grad_norm_(model.model.parameters(),max_norm=2.0)
-            optimizer.step()
-            scheduler.step()
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            focal_losses.update(loss_focal.item(), batch_size)
-            dice_losses.update(loss_dice.item(), batch_size)
-            iou_losses.update(loss_iou.item(), batch_size)
-            boundary_losses.update(loss_boundary.item(), batch_size)
-            total_losses.update(loss_total.item(), batch_size)
-
-            fabric.print(f'Epoch: [{epoch}][{iter+1}/{len(train_dataloader)}]'
-                         f' | Time [({batch_time.sum-val_time:.3f}s)]'
-                         f' | Data [({data_time.sum:.3f}s)]'
-                         f' | valTime [({val_time:.3f})s]'
-                         f' | Focal Loss [({focal_losses.avg:.4f})]'
-                         f' | Dice Loss [({dice_losses.avg:.4f})]'
-                         f' | IoU Loss [({iou_losses.avg:.4f})]'
-                         f' | Boundary Loss [({boundary_losses.avg:.4f})]'
-                         f' | Total Loss [({total_losses.avg:.4f})]')
-
+def customized_mseloss(pred_feats, target_feats):
+    # return (0.5 * (pred_feats - target_feats) ** 2).sum(1).mean()
+    return ((pred_feats - target_feats) ** 2).sum(1).mean().sqrt()
 
 
 
@@ -382,7 +272,74 @@ def configure_opt(cfg: Box, model: Model):
 
 def get_max_memory_allocated():
     return torch.cuda.max_memory_allocated() / 1024 ** 2  # Convert bytes to megabytes
+def reduce_mean(tensor, nprocs):
+    rt = tensor.clone()
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
+    rt /= nprocs
+    return rt
+def distill(
+    cfg: Box,
+    fabric: L.Fabric,
+    model: Model,
+    optimizer: _FabricOptimizer,
+    scheduler: _FabricOptimizer,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+):  
+    mse_loss_meter=AverageMeter()
+    eval_interval_iter=int((len(train_loader.dataset)+1)/train_loader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
+    if fabric.global_rank == 0:
+        writer = SummaryWriter('runs/tensorboardwriter')
+    # 运行 tensorboard
+    # tensorboard --logdir "./runs/tensorboardwriter"
+    total_iters=0
+    for epoch in range(1, cfg.num_epochs+1):
+        # new epoch
+        if fabric.global_rank == 0:
+            print("------start epoch {}------".format(epoch))
+        # train_sampler.set_epoch(epoch)
+        model.train()
+        for batch_idx, data in enumerate(train_loader):
+            rgbd, _bboxes,_masks,imgemb,image_filename=data
+            total_iters+=1                
+            # imgs, target_feats = imgs.cuda(args.local_rank), target_feats.cuda(args.local_rank)
+            optimizer.zero_grad()
+            predemb=model.model.image_encoder(rgbd)
+            loss = customized_mseloss(predemb, imgemb)
+            fabric.backward(loss)
+            torch.nn.utils.clip_grad_norm_(model.model.parameters(),max_norm=2.0)
+            optimizer.step()
+            scheduler.step()
+            
+            mse_loss_meter.update(loss,len(rgbd))
+            # if is master process
+            if fabric.global_rank == 0:
+                # print training info
+                if (batch_idx+1) %int(eval_interval_iter*0.05) == 0:
+                    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tMSE Loss: {:.6f}'.format(
+                        epoch, batch_idx * len(rgbd) * dist.get_world_size(), len(train_loader.dataset),
+                            100. * batch_idx / len(train_loader), loss.item()))
+                    writer.add_scalar("mse_loss", loss.item(), total_iters)
+                
+                # save model
+                if total_iters % eval_interval_iter == 0:
+                    if fabric.global_rank == 0:
+                        save_path=os.path.join(cfg.out_dir, f"epoch_{epoch-1:03d}_iter-{total_iters:06d}-mse{mse_loss_meter.avg:.2f}-distillvittiny.pth")
+                        print("save model to {}".format(save_path))
+                        torch.save(model.model.state_dict(), save_path)
 
+                # evaluation
+                '''
+                if total_iters % args.eval_iters == 0:
+                    test_loss = test(args, model, val_loader)
+                    print('\nTest set: Average loss: {:.4f}\n'.format(test_loss))
+                    writer.add_scalar("eval_mse_loss", test_loss, total_iters)
+                '''
+
+        # save final model
+    if fabric.global_rank == 0:
+        torch.save(model.model.state_dict(), os.path.join(cfg.out_dir, "iter_final.pth"))
+        writer.close()
 
 def main(cfg: Box) -> None:
     print(f"------------Now {cfg.mode}--------------")
@@ -395,29 +352,11 @@ def main(cfg: Box) -> None:
 
     if fabric.global_rank == 0:
         os.makedirs(cfg.out_dir, exist_ok=True)
-    train_data, val_data = load_datasets(cfg,1024 )#model.model.image_encoder.img_size
-    train_data = fabric._setup_dataloader(train_data)
-    val_data = fabric._setup_dataloader(val_data)
-    init_memory = torch.cuda.memory_allocated()
+
     # with fabric.device:
     model = Model(cfg)
     # put sam into lora
-    if cfg.model.lora.use_lora:
-        sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
-        if cfg.model.lora.checkpoint is not None:
-            sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
-        model.model=sam_lora.sam 
-    else:
-        sam_lora=None
-    if cfg.mode=="test":
-        if cfg.model.checkpoint is not None:# pop the proj anyway
-            with open(cfg.model.checkpoint, "rb") as f:
-                state_dict = torch.load(f)
-        
-        if cfg.model.proj_checkpoint== "inSAM" and cfg.model.type != "vit_tiny":# means proj is in sam's ckpt, no need another pth
-            sam_lora.sam.load_state_dict(state_dict, strict=False)
-            
-
+    
     model.setup(fabric.device)
     # for pname,param in model.model.named_parameters():
     #     if param.requires_grad:
@@ -429,47 +368,32 @@ def main(cfg: Box) -> None:
         if param.requires_grad:
             print(pname)
    # print(model)
-    # imagergbd = torch.randn(1, 4, 1024, 1024).to(fabric.device)
-    # boxes = torch.randn(1, 4).to(fabric.device)
-    # boxes = [boxes]
-    # boxes = tuple(boxes)
-    # flops, params = profile(model, inputs=(imagergbd, boxes))
-    # print("FLOPs=", str(flops / 1e9) + '{}'.format("G"))
-    # print("params=", str(params / 1e6) + '{}'.format("M"))
 
-    
+    train_data, val_data = load_distill_datasets(cfg, model.model.image_encoder.img_size)
+    train_data = fabric._setup_dataloader(train_data)
+    val_data = fabric._setup_dataloader(val_data)
 
     optimizer, scheduler = configure_opt(cfg, model)
-    if cfg.mode=="train":
-        model, optimizer = fabric.setup(model, optimizer)
+    model, optimizer = fabric.setup(model, optimizer)
+    # model.mark_forward_method('get_imgemb')
 
-    if not os.path.exists('runs/val/log.txt'):
-        path = Path('runs/val/log.txt')
-        path.touch()
-    else:
-        with open('runs/val/log.txt', 'w') as file:
-            file.truncate(0)
+    # if not os.path.exists('runs/val/log.txt'):
+    #     path = Path('runs/val/log.txt')
+    #     path.touch()
+    # else:
+    #     with open('runs/val/log.txt', 'w') as file:
+    #         file.truncate(0)
 
+    distill(cfg, fabric, model,optimizer, scheduler, train_data, val_data)
+    # torch.cuda.reset_max_memory_allocated()
+        
     
+    
+    # if cfg.mode=='train':
+    #     train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
+    #     validate(fabric, model, sam_lora,val_data, epoch=-2,upiter=0)
 
-
-    current_memory = torch.cuda.memory_allocated()
-    torch.cuda.reset_peak_memory_stats()
-    validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
-    additional_memory = torch.cuda.memory_allocated() - current_memory
-    peak_memory = torch.cuda.max_memory_allocated()
-    additional_peak_memory = peak_memory - current_memory
-    print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
-    print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
-    print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
-
-
-
-    if cfg.mode=='train':
-        train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
-        validate(fabric, model, sam_lora,val_data, epoch=-2,upiter=0)
-
-    max_memory = get_max_memory_allocated()
+    # max_memory = get_max_memory_allocated()
 
 
 if __name__ == "__main__":

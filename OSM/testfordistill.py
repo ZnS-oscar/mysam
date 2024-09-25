@@ -30,6 +30,7 @@ from lightning.fabric.strategies import DDPStrategy
 from lora import LoRA_sam
 from safetensors.torch import save_file
 from abl import ABL
+from distill import customized_mseloss
 torch.set_float32_matmul_precision('high')
 IMGMEAN=np.array([0.485, 0.456, 0.406])
 IMGSTD=np.array([0.229, 0.224, 0.225])
@@ -74,26 +75,27 @@ def show_prediction(image, masks, boxes):
     show_mask(masks, plt.gca())
     plt.axis('off')
     plt.show()
-# def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter, save_path='runs/val/masks', show_image=None):
-#     for sub,img in enumerate(images):
-#         draw_mask(img, bboxes[sub], pred_mask[sub], gt_mask[sub], epoch, upiter,iter, sub,save_path, show_image)
+def draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter, save_path='runs/val/masks', show_image=None,img_info=""):
+    for sub,img in enumerate(images):
+        draw_mask(img, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path, show_image,img_info=img_info)
 
 
-def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path='runs/val/masks', show_image=None,img_info=""):
-    pred_masks = (pred_masks >= 0.5).float()
-    h, w = pred_masks.shape[1], pred_masks.shape[2]
-    pred_masks = pred_masks.cpu().numpy()
-    gt_masks = gt_masks.cpu().numpy()
+def draw_mask(image, bboxes, pred_mask, gt_mask, epoch, upiter,iter, sub,save_path='runs/val/masks', show_image=None,img_info=""):
+    pred_mask = (pred_mask >= 0.5).float()
+    h, w = pred_mask.shape[1], pred_mask.shape[2]
+    pred_mask = pred_mask.cpu().numpy()
+    gt_mask = gt_mask.cpu().numpy()
 
     # fuse
     # a, b, c, d = np.max(pred_mask), np.min(pred_mask), np.max(gt_mask), np.min(gt_mask)  # 1, 0, 1, 0
     pred_mask_fuse, gt_mask_fuse = np.zeros((h, w)), np.zeros((h, w))
-    for i in range(len(pred_masks)):
-        pred_mask_fuse += pred_masks[i]
-    for i in range(len(gt_masks)):
-        gt_mask_fuse += gt_masks[i]
+    for i in range(len(pred_mask)):
+        pred_mask_fuse += pred_mask[i]
+    for i in range(len(gt_mask)):
+        gt_mask_fuse += gt_mask[i]
     pred_mask_fuse[pred_mask_fuse > 0] = 1
     gt_mask_fuse[gt_mask_fuse > 0] = 1
+
     if show_image == None:
         show_image = np.zeros((h, w, 3))
 
@@ -156,7 +158,7 @@ def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path=
     save_path = save_path + '_epoch' + str(epoch) + '_iter'+ str(upiter)+'/'
     if not os.path.exists(save_path):
         os.mkdir(save_path)
-    save_path = save_path + str(upiter) +'_'+str(iter)+img_info.split('.')[0]+ '.png'
+    save_path = save_path + str(iter) +'_'+str(sub) +img_info.split('.')[0]+'.png'
     show_image = cv2.cvtColor(show_image.astype("uint8"), cv2.COLOR_RGB2BGR)
 
     'overlap'
@@ -181,13 +183,12 @@ def draw_imgs(image, bboxes, pred_masks, gt_masks, epoch, upiter,iter,save_path=
 
 
 # def validate(fabric: L.Fabric, model: Model, val_dataloader: DataLoader, epoch: int = 0):
-def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,upiter:int=0):
+def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: DataLoader, epoch: int = 0,upiter:int=0,):
     model.eval()
     ious = AverageMeter()
     f1_scores = AverageMeter()
 
     with torch.no_grad():
-        sum_time=0
         for iter, data in enumerate(val_dataloader):
             if iter>50:
                 break
@@ -205,8 +206,9 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 pred_mask = F.sigmoid(pred_mask)
                 pred_mask = torch.clamp(pred_mask, min=0, max=1)
                 # draw masks, boxes 
-                if (fabric.device==1 or fabric.global_rank==0) and iter<(30/val_dataloader.batch_size) :
-                    # and iter<(30/val_dataloader.batch_size)
+                if (fabric.device==1 or fabric.global_rank==0):
+                #  and iter<(30/val_dataloader.batch_size):
+                            # and iter<(25/val_dataloader.batch_size) :
                 #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
                     draw_imgs(images, bboxes, pred_mask, gt_mask, epoch, upiter,iter,img_info=img_info[0])
 
@@ -222,9 +224,8 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
                 ious.update(batch_iou, num_images)
                 f1_scores.update(batch_f1, num_images)
 
-            inference_time = (t2 - t1) * 1000  # ms
-            sum_time+=(t2 - t1)
-            # print('model inference time: ', inference_time, 'ms.','   total time',sum_time,'s')
+    inference_time = (t2 - t1) * 1000  # ms
+    print('model inference time: ', inference_time, 'ms.')
     with open("runs/val/log.txt", 'a') as f:
         f.write('Val: [' + str(epoch) + '] - ' + f'[ {str(upiter)} ] - ')
         f.write('Mean IoU: [' + str(torch.round(ious.avg, decimals=4)) + '] ')
@@ -239,11 +240,12 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
     state_dict = model.model.state_dict()
     if fabric.global_rank == 0:
         # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch-{epoch:06d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
-        sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch_{epoch-1:02d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
+        # sam_lora.save_lora_parameters(os.path.join(cfg.out_dir, f"epoch_{epoch-1:02d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors"))
         # proj_weight={'image_encoder.patch_embed.proj.weight':model.model.image_encoder.patch_embed.proj.weight}
         # save_file(proj_weight, os.path.join(cfg.out_dir, f"epoch-{epoch-1:02d}-iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}-proj.safetensors"))
-        torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
+        # torch.save(state_dict, os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-ckpt.pth"))
         # print(model.model.image_encoder.patch_embed.proj.weight.shape)
+        pass
         # return os.path.join(cfg.out_dir, f"epoch_{epoch-1:06d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-ckpt.pth"),os.path.join(cfg.out_dir, f"epoch_{epoch-1:02d}_iter-{upiter:05d}-f1{f1_scores.avg:.2f}-lora{sam_lora.rank}.safetensors")
     model.train()
 
@@ -317,18 +319,10 @@ def train_sam(
                 batch_iou = calc_iou(pred_mask, gt_mask)
                 loss_focal += focal_loss(pred_mask, gt_mask) 
                 loss_dice += dice_loss(pred_mask, gt_mask) 
-                loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') 
-                lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask)
-                loss_boundary+=lb if lb is not None else 0
-                if lb is None:
-                    with open("runs/val/log.txt", 'a') as f:
-                        f.write(f"found loss boundary is None:{img_name}\n")
-                        f.flush()
-                    f.close()
-                
-
-                
-            loss_total = 20. * loss_focal + loss_dice + loss_iou/num_masks+loss_boundary/num_masks
+                loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') / num_masks
+                # loss_boundary+=boundary_loss(pred_mask.unsqueeze(0),gt_mask)/num_masks
+                loss_boundary=0
+            loss_total = 20. * loss_focal + loss_dice + loss_iou+loss_boundary
                 # +loss_boundary
                 # torch.cuda.empty_cache() 
             # if torch.isnan(loss_total) or torch.isnan(loss_focal) or torch.isnan(loss_dice) or torch.isnan(loss_iou):
@@ -346,7 +340,7 @@ def train_sam(
             focal_losses.update(loss_focal.item(), batch_size)
             dice_losses.update(loss_dice.item(), batch_size)
             iou_losses.update(loss_iou.item(), batch_size)
-            boundary_losses.update(loss_boundary.item(), batch_size)
+            # boundary_losses.update(loss_boundary.item(), batch_size)
             total_losses.update(loss_total.item(), batch_size)
 
             fabric.print(f'Epoch: [{epoch}][{iter+1}/{len(train_dataloader)}]'
@@ -383,6 +377,65 @@ def configure_opt(cfg: Box, model: Model):
 def get_max_memory_allocated():
     return torch.cuda.max_memory_allocated() / 1024 ** 2  # Convert bytes to megabytes
 
+def get_teacher_model(cfg,tea_ckpt):
+    cfg.model.checkpoint=tea_ckpt
+    tea_model=Model(cfg)
+    sam_lora=LoRA_sam(tea_model.model,cfg.model.lora.r)
+    if cfg.model.lora.checkpoint is not None:
+        sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
+    tea_model.model=sam_lora.sam 
+    if cfg.model.checkpoint is not None:# pop the proj anyway
+            with open(cfg.model.checkpoint, "rb") as f:
+                state_dict = torch.load(f)
+        
+    if cfg.model.proj_checkpoint== "inSAM":# means proj is in sam's ckpt, no need another pth
+        sam_lora.sam.load_state_dict(state_dict, strict=False)
+        # if cfg.model.lora.checkpoint is not None:
+        #     sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
+    return tea_model
+    
+    
+def get_student_model(cfg,stu_ckpt,tea_model:Model):
+    cfg.model.checkpoint=stu_ckpt
+    cfg.model.type='vit_tiny'
+    stu_model=Model(cfg)
+    stu_model.model.mask_decoder=tea_model.model.mask_decoder
+    stu_model.model.prompt_encoder=tea_model.model.prompt_encoder
+    return stu_model
+
+def distillvalidate(fabric: L.Fabric, tea_model: Model, stu_model: Model,val_dataloader: DataLoader, epoch: int = 0,upiter:int=0):
+    tea_model.eval()
+    stu_model.eval()
+    with torch.no_grad():
+        for iter, data in enumerate(val_dataloader):
+            images, bboxes,gt_masks,img_info = data
+            num_images = images.size(0)
+            # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            tea_imgembs=tea_model.model.image_encoder(images)
+            stu_imgembs=stu_model.model.image_encoder(images)
+            
+            for iminfo,teaemb,stuemb in zip(img_info,tea_imgembs,stu_imgembs):
+                with open("runs/val/log.txt", 'a') as f:
+                    f.write(f"imginfo {iminfo}-loss-{ customized_mseloss(stuemb.unsqueeze(0), teaemb.unsqueeze(0))}\n")
+                    f.flush()
+                f.close()
+            tea_pred_masks, _ = tea_model(images, bboxes)
+            stu_pred_masks, _ = stu_model(images, bboxes)
+            for tpm,spm, gt_mask in zip(tea_pred_masks,stu_pred_masks, gt_masks):
+                tpm = F.sigmoid(tpm)
+                tpm = torch.clamp(tpm, min=0, max=1)
+                spm = F.sigmoid(spm)
+                spm = torch.clamp(spm, min=0, max=1)
+                # draw masks, boxes 
+                if (fabric.device==1 or fabric.global_rank==0) and iter<(30/val_dataloader.batch_size):
+                            # and iter<(25/val_dataloader.batch_size) :
+                #either only 1 gpu, or the 1st subprocess; only draw first 10 val img
+                    draw_imgs(images, bboxes, tpm, gt_mask, epoch, upiter,iter,save_path='runs/val/tea/',img_info=img_info[0])
+                    draw_imgs(images, bboxes, spm, gt_mask, epoch, upiter,iter,save_path='runs/val/stu/',img_info=img_info[0])
+
+            
+                
+
 
 def main(cfg: Box) -> None:
     print(f"------------Now {cfg.mode}--------------")
@@ -395,82 +448,23 @@ def main(cfg: Box) -> None:
 
     if fabric.global_rank == 0:
         os.makedirs(cfg.out_dir, exist_ok=True)
-    train_data, val_data = load_datasets(cfg,1024 )#model.model.image_encoder.img_size
+
+    
+    tea_ckpt=cfg.model.checkpoint
+    stu_ckpt=cfg.model.stu_ckpt
+    tea_model=get_teacher_model(cfg,tea_ckpt)
+    stu_model=get_student_model(cfg,stu_ckpt,tea_model)
+
+    tea_model.setup(fabric.device)
+    stu_model.setup(fabric.device)
+
+    train_data, val_data = load_datasets(cfg, tea_model.model.image_encoder.img_size)
     train_data = fabric._setup_dataloader(train_data)
     val_data = fabric._setup_dataloader(val_data)
-    init_memory = torch.cuda.memory_allocated()
-    # with fabric.device:
-    model = Model(cfg)
-    # put sam into lora
-    if cfg.model.lora.use_lora:
-        sam_lora=LoRA_sam(model.model,cfg.model.lora.r)
-        if cfg.model.lora.checkpoint is not None:
-            sam_lora.load_lora_parameters(cfg.model.lora.checkpoint)
-        model.model=sam_lora.sam 
-    else:
-        sam_lora=None
-    if cfg.mode=="test":
-        if cfg.model.checkpoint is not None:# pop the proj anyway
-            with open(cfg.model.checkpoint, "rb") as f:
-                state_dict = torch.load(f)
-        
-        if cfg.model.proj_checkpoint== "inSAM" and cfg.model.type != "vit_tiny":# means proj is in sam's ckpt, no need another pth
-            sam_lora.sam.load_state_dict(state_dict, strict=False)
-            
 
-    model.setup(fabric.device)
-    # for pname,param in model.model.named_parameters():
-    #     if param.requires_grad:
-    #         if 'linear_a_' not in pname and 'linear_b_' not in pname and pname!='image_encoder.patch_embed.proj.weight':
-    #             raise  ValueError(f'weight {pname} should be freeze')
-
-    print("unfreeze params----------------------")
-    for pname,param in model.model.named_parameters():
-        if param.requires_grad:
-            print(pname)
-   # print(model)
-    # imagergbd = torch.randn(1, 4, 1024, 1024).to(fabric.device)
-    # boxes = torch.randn(1, 4).to(fabric.device)
-    # boxes = [boxes]
-    # boxes = tuple(boxes)
-    # flops, params = profile(model, inputs=(imagergbd, boxes))
-    # print("FLOPs=", str(flops / 1e9) + '{}'.format("G"))
-    # print("params=", str(params / 1e6) + '{}'.format("M"))
-
+    distillvalidate(fabric, tea_model, stu_model,val_data, epoch=-404,upiter=0)
     
-
-    optimizer, scheduler = configure_opt(cfg, model)
-    if cfg.mode=="train":
-        model, optimizer = fabric.setup(model, optimizer)
-
-    if not os.path.exists('runs/val/log.txt'):
-        path = Path('runs/val/log.txt')
-        path.touch()
-    else:
-        with open('runs/val/log.txt', 'w') as file:
-            file.truncate(0)
-
     
-
-
-    current_memory = torch.cuda.memory_allocated()
-    torch.cuda.reset_peak_memory_stats()
-    validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
-    additional_memory = torch.cuda.memory_allocated() - current_memory
-    peak_memory = torch.cuda.max_memory_allocated()
-    additional_peak_memory = peak_memory - current_memory
-    print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
-    print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
-    print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
-
-
-
-    if cfg.mode=='train':
-        train_sam(cfg, fabric, model, sam_lora,optimizer, scheduler, train_data, val_data)
-        validate(fabric, model, sam_lora,val_data, epoch=-2,upiter=0)
-
-    max_memory = get_max_memory_allocated()
-
 
 if __name__ == "__main__":
     main(cfg)

@@ -1,8 +1,8 @@
 from box import Box
 
 config = {
-    'mode':'train',
-    "num_devices": 2,
+    'mode':'test',
+    "num_devices": 1,
     "batch_size": 1,
     "num_workers": 8,
     "num_epochs":4,
@@ -21,21 +21,19 @@ config = {
         "type": 'vit_l',# vit_h, vit_l, vit_b, vit_tiny
         "stu_ckpt":"09232014rightdistilll/train/epoch_003_iter-018735-mse1.41-distillvittiny.pth",
         # "checkpoint":"09221510goodrgbdfreezevit/train/epoch_000000_iter-24996-f10.93-ckpt.pth",
-        "checkpoint": "weight/sam_hq_vit_l.pth",
-        # "checkpoint":"09241200unfreez/emoreandbl/train/epoch_000000_iter-06249-f10.86-ckpt.pth",
-        # "checkpoint":"09221510goodrgbdfreezevit/train/epoch_000000_iter-24996-f10.93-ckpt.pth",
-        # "checkpoint":"09232014rightdistilll/train/epoch_003_iter-018735-mse1.41-distillvittiny.pth",
+        # "checkpoint": "weight/sam_hq_vit_tiny.pth",
+        "checkpoint":"09221510goodrgbdfreezevit/train/epoch_000000_iter-24996-f10.93-ckpt.pth",
         # "proj_checkpoint":'09181127/train/epoch-03-iter-24156-f10.92-lora32-proj.safetensors',
-        "proj_checkpoint":None,
-        # "proj_checkpoint":"inSAM",
+        # "proj_checkpoint":None,
+        "proj_checkpoint":"inSAM",
         "freeze": {
             "image_encoder": True,
-            "prompt_encoder": False,
-            "mask_decoder": False,
-            "unfreeze_image_encoder_layer":[0,1],
-            "unfreeze_image_encoder_norm":[0,1,2,3,4,5,6,7,8,9,10,11,12,13],#[0],
-            "preprocess_layers":False,#False,
-            "lora":False # the lora should always be False
+            "prompt_encoder": True,
+            "mask_decoder": True,
+            "unfreeze_image_encoder_layer":None,
+            "unfreeze_image_encoder_norm":None,#[0],
+            "preprocess_layers":True,#False,
+            "lora":True # the lora should always be False
             
         },
         "lora":{
@@ -46,7 +44,7 @@ config = {
             'lora_dropout':0.1,
             'bias':'none',
             # 'modules_to_save':["classifier"],
-            # 'checkpoint':'09241200unfreezemoreandbl/train/epoch_00_iter-06249-f10.86-lora32.safetensors',
+            # 'checkpoint':'09221510goodrgbdfreezevit/train/epoch_00_iter-24996-f10.93-lora32.safetensors',
             'checkpoint':None,
         }
     },
@@ -73,11 +71,11 @@ config = {
             "depth_root_dir":"data_zoo/pcbhbb_slice_coco/depth",
             "annotation_file": "data_zoo/pcbhbb_slice_coco/images.json",
         },
-        # "test": {
-        #     "root_dir": "data_zoo/imagenet1k_val",
-        #     "depth_root_dir":"data_zoo/depth/val",
-        #     "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
-        # },
+        "test": {
+            "root_dir": "data_zoo/imagenet1k_val",
+            "depth_root_dir":"data_zoo/depth/val",
+            "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
+        },
     }
 }
 

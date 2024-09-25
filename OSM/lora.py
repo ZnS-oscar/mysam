@@ -32,6 +32,7 @@ class LoRA_qkv(nn.Module):
             linear_b_q: nn.Module,
             linear_a_v: nn.Module,
             linear_b_v: nn.Module,
+            dropout:float=0.05,
     ):
         
         super(LoRA_qkv, self).__init__()
@@ -42,11 +43,16 @@ class LoRA_qkv(nn.Module):
         self.linear_b_v = linear_b_v
         self.d_model = qkv.in_features
         self.w_identity = torch.eye(qkv.in_features)
+        self.dropoutLayer=nn.Dropout(p=dropout)
 
     def forward(self, x: Tensor):
         qkv = self.qkv(x)
-        q_ba = self.linear_b_q(self.linear_a_q(x))
-        v_ba = self.linear_b_v(self.linear_a_v(x))
+        q_ba = self.linear_b_q(self.linear_a_q(self.dropoutLayer(x)))
+        v_ba = self.linear_b_v(self.linear_a_v(self.dropoutLayer(x)))
+
+        q_ba = self.dropoutLayer(q_ba)
+        v_ba = self.dropoutLayer(v_ba)
+
         qkv[:, :, :, :self.d_model] += q_ba #q part
         qkv[:, :, :, -self.d_model:] += v_ba #v part
 
@@ -82,10 +88,10 @@ class LoRA_sam(nn.Module):
         self.A_weights = []
         self.B_weights = []
 
-        # freeze parameters of the image encoder
-        for param in sam_model.image_encoder.parameters():
-            param.requires_grad = False
-        sam_model.image_encoder.patch_embed.proj.weight.requires_grad=True
+        # freeze parameters of the image encoder all freeze is in Model.setup()
+        # for param in sam_model.image_encoder.parameters():
+        #     param.requires_grad = False
+        # sam_model.image_encoder.patch_embed.proj.weight.requires_grad=True
         for t_layer_i, blk in enumerate(sam_model.image_encoder.blocks):
             # if only lora on few layers
             if t_layer_i not in self.lora_layer:
