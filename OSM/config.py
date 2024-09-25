@@ -62,17 +62,17 @@ config = {
         #     "depth_root_dir":"data_zoo/depth/val",
         #     "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
         # },
-        # "val": {
-        #     "root_dir": "data_zoo/imagenet1k_val",
-        #     "depth_root_dir":"data_zoo/depth/val",
-        #     "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
-        #     "imgemb_dir":"data_zoo/imagenet1krgbd_imgemb/val",
-        # },
         "val": {
-            "root_dir": "data_zoo/pcbhbb_slice_coco/images",
-            "depth_root_dir":"data_zoo/pcbhbb_slice_coco/depth",
-            "annotation_file": "data_zoo/pcbhbb_slice_coco/images.json",
+            "root_dir": "data_zoo/imagenet1k_val",
+            "depth_root_dir":"data_zoo/depth/val",
+            "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
+            "imgemb_dir":"data_zoo/imagenet1krgbd_imgemb/val",
         },
+        # "val": {
+        #     "root_dir": "data_zoo/pcbhbb_slice_coco/images",
+        #     "depth_root_dir":"data_zoo/pcbhbb_slice_coco/depth",
+        #     "annotation_file": "data_zoo/pcbhbb_slice_coco/images.json",
+        # },
         # "test": {
         #     "root_dir": "data_zoo/imagenet1k_val",
         #     "depth_root_dir":"data_zoo/depth/val",

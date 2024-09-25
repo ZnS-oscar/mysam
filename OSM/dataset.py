@@ -9,7 +9,7 @@ from segment_anything.utils.transforms import ResizeLongestSide
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 import random
-
+from abl import ABL
 
 IMGMEAN=torch.tensor([0.485, 0.456, 0.406])
 IMGSTD=torch.tensor([0.229, 0.224, 0.225])
@@ -69,16 +69,22 @@ class COCODataset(Dataset):
             image, depth_image,masks, bboxes = self.transform(image, depth_image,masks, np.array(bboxes))
 
         bboxes = np.stack(bboxes, axis=0)
-        masks = np.stack(masks, axis=0)
+        masks = torch.tensor(np.stack(masks, axis=0)).float()
         rgbd=torch.concat([image,depth_image],dim=0)
+        abl=ABL(ignore_label=255)
+        gt_boundary = abl.gt2boundary(masks, )
+        dist_maps = abl.get_dist_maps(gt_boundary) # <-- it will slow down the training, you can put it to dataloader.
 
-        return rgbd, torch.tensor(bboxes), torch.tensor(masks).float(), image_info['file_name']
+
+        return rgbd, torch.tensor(bboxes), masks.float(),dist_maps, image_info['file_name']
 
 
 def collate_fn(batch):
-    images, bboxes, masks,image_name = zip(*batch)
+    images, bboxes, masks,dist_maps,image_name = zip(*batch)
     images = torch.stack(images)
-    return images, bboxes, masks,image_name
+    dist_maps=torch.stack(dist_maps)
+
+    return images, bboxes, masks,dist_maps,image_name
 
 
 class ResizeAndPad:
@@ -186,7 +192,7 @@ def load_datasets(cfg, img_size):
                       transform=transform)
     train_dataloader = DataLoader(train,
                                   batch_size=cfg.batch_size,
-                                  shuffle=True,
+                                  shuffle=False,
                                   num_workers=cfg.num_workers,
                                   collate_fn=collate_fn)
     val_dataloader = DataLoader(val,

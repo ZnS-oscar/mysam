@@ -12,10 +12,7 @@ from operator import itemgetter
 
 # Tools
 def kl_div(a,b): # q,p
-    if a.shape[1]==1:
-        return (torch.abs(torch.sigmoid(a)-torch.sigmoid(b))>0.1).float()
-    else:
-        return F.softmax(b, dim=1) * (F.log_softmax(b, dim=1) - F.log_softmax(a, dim=1))   
+    return F.softmax(b, dim=1) * (F.log_softmax(b, dim=1) - F.log_softmax(a, dim=1))   
 
 def one_hot2dist(seg):
     res = np.zeros_like(seg)
@@ -174,7 +171,7 @@ class ABL(nn.Module):
         
         return out
 
-    def forward(self, logits, target):
+    def forward(self, logits, target,dist_maps):
         vis_img=torch.tensor([0,0])
         eps = 1e-10
         # logits=torch.sigmoid(logits)
@@ -186,10 +183,9 @@ class ABL(nn.Module):
             logits = F.interpolate(input=logits, size=(
                 h, w), mode='bilinear', align_corners=True)
 
-        gt_boundary = self.gt2boundary(target, ignore_label=self.ignore_label)
+        # gt_boundary = self.gt2boundary(target, ignore_label=self.ignore_label)
 
-        dist_maps = self.get_dist_maps(gt_boundary).cuda() # <-- it will slow down the training, you can put it to dataloader.
-
+        # dist_maps = self.get_dist_maps(gt_boundary).cuda() # <-- it will slow down the training, you can put it to dataloader.
         pred_boundary = self.logits2boundary(logits)
         if pred_boundary.sum() < 1: # avoid nan
             return None # you should check in the outside. if None, skip this loss.

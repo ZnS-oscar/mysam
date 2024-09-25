@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 ALPHA = 0.8
 GAMMA = 2
-
+from abl import ABL
 # def manual_bce_with_logits(inputs, targets, epsilon=1e-7):
 
     
@@ -106,3 +106,10 @@ class BoundaryLoss(nn.Module):
         union = ((gt_boundary + dt_boundary) > 0).sum()
         boundary_iou = intersection / union
         return boundary_iou
+
+class BinaryBoundaryLoss(ABL):
+    def __init__(self,isdetach=True, max_N_ratio = 1/100, ignore_label = 255, label_smoothing=0.2, weight = None, max_clip_dist = 20.):
+        ABL.__init__(self,isdetach=True, max_N_ratio = 1/100, ignore_label = 255, label_smoothing=0.2, weight = None, max_clip_dist = 20.)
+    def forward(self, logits, target,dist_maps):
+        input_logits=torch.cat([logits,-logits],dim=1)
+        return super(BinaryBoundaryLoss, self).forward(input_logits, target,dist_maps) 

@@ -11,7 +11,7 @@ from dataset import load_datasets
 from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
 from losses import DiceLoss
-from losses import FocalLoss
+from losses import FocalLoss,BinaryBoundaryLoss
 from losses import BoundaryLoss
 from model import Model
 from torch.utils.data import DataLoader
@@ -191,7 +191,7 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
         for iter, data in enumerate(val_dataloader):
             if iter>50:
                 break
-            images, bboxes, gt_masks,img_info = data
+            images, bboxes, gt_masks,dist_maps,img_info = data
 
             num_images = images.size(0)
 
@@ -262,7 +262,7 @@ def train_sam(
 
     focal_loss = FocalLoss()
     dice_loss = DiceLoss()
-    boundary_loss=ABL()
+    boundary_loss=BinaryBoundaryLoss()
 
     for epoch in range(1, cfg.num_epochs+1):
         batch_time = AverageMeter()
@@ -279,6 +279,8 @@ def train_sam(
         validated = False
         eval_interval_iter=int((len(train_dataloader.dataset)+1)/train_dataloader.batch_size*cfg.eval_interval_iter_percent/cfg.num_devices)-1
         for iter, data in enumerate(train_dataloader):
+            # if iter<1923:
+            #     continue
             data_time.update(time.time() - end)
             val_time=0
             # if epoch > 1 and epoch % cfg.eval_interval == 0 and not validated:
@@ -288,7 +290,7 @@ def train_sam(
                 validated = True
                 val_time=time.time()-end
             
-            images, bboxes, gt_masks,img_name = data
+            images, bboxes, gt_masks,dist_maps,img_name = data
             batch_size = images.size(0)
             # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
             try:
@@ -318,7 +320,7 @@ def train_sam(
                 loss_focal += focal_loss(pred_mask, gt_mask) 
                 loss_dice += dice_loss(pred_mask, gt_mask) 
                 loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') 
-                lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask)
+                lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask,dist_maps.squeeze(0))
                 loss_boundary+=lb if lb is not None else 0
                 if lb is None:
                     with open("runs/val/log.txt", 'a') as f:
@@ -453,15 +455,15 @@ def main(cfg: Box) -> None:
     
 
 
-    current_memory = torch.cuda.memory_allocated()
-    torch.cuda.reset_peak_memory_stats()
-    validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
-    additional_memory = torch.cuda.memory_allocated() - current_memory
-    peak_memory = torch.cuda.max_memory_allocated()
-    additional_peak_memory = peak_memory - current_memory
-    print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
-    print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
-    print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
+    # current_memory = torch.cuda.memory_allocated()
+    # torch.cuda.reset_peak_memory_stats()
+    # validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
+    # additional_memory = torch.cuda.memory_allocated() - current_memory
+    # peak_memory = torch.cuda.max_memory_allocated()
+    # additional_peak_memory = peak_memory - current_memory
+    # print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
+    # print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
+    # print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
 
 
 
