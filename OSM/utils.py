@@ -3,8 +3,8 @@ import os
 import cv2
 import torch
 from box import Box
-from dataset import COCODataset
-from model import Model
+from .dataset import COCODataset
+from .model import Model
 from torchvision.utils import draw_bounding_boxes
 from torchvision.utils import draw_segmentation_masks
 from tqdm import tqdm

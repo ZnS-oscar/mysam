@@ -1,21 +1,37 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from .sam import sam_model_registry
-from .sam import SamPredictor
+from sam import sam_model_registry
+from sam import SamPredictor
 
+class ClassificationHead(nn.Module):
+    def __init__(self,cfg):
+        super().__init__()
+        self.num_classes=cfg.num_classes
+        self.output_classifier_mlps = nn.Linear(
+                self.transformer_dim, self.num_classes + 1
+            )
+
+    def forward(self,mask_tokens_out):
+        class_predictions = self.output_classifier_mlps(mask_tokens_out)
+        return class_predictions
 
 class Model(nn.Module):
+
 
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint,proj_checkpoint=cfg.model.proj_checkpoint)
+        # self.classification_head=ClassificationHead(cfg,)
+
+    
 
     def setup(self, device):
         # self.model = sam_model_registry[self.cfg.model.type](checkpoint=self.cfg.model.checkpoint)
         self.model.to(device)
         self.model.train()
-        
+        # self.classification_head.to(device)
+        # self.classification_head.train()
 
         '''image encoders already freeze in lora.py __init__(), normally do not uncomment these codes'''
         if self.cfg.model.freeze.image_encoder:
@@ -58,6 +74,7 @@ class Model(nn.Module):
         image_embeddings = self.model.image_encoder(images)  # (Bsize, 256, 64, 64)
         pred_masks = []
         ious = []
+        class_predictions=[]
         for embedding, bbox in zip(image_embeddings, bboxes):
             sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
                 points=None,
@@ -65,14 +82,15 @@ class Model(nn.Module):
                 masks=None,
             )  # sparse_embeddings: (1, 3, 256)  dense_embeddings: (1, 256, 64, 64)
 
-            low_res_masks, iou_predictions = self.model.mask_decoder(
+            low_res_masks, iou_predictions,mask_tokens_out = self.model.mask_decoder(
                 image_embeddings=embedding.unsqueeze(0),  # image_embeddings  (1, 256, 64, 64)
                 image_pe=self.model.prompt_encoder.get_dense_pe(),  # positional encoding  (1, 256, 64, 64)
                 sparse_prompt_embeddings=sparse_embeddings,  # embeddings of the points and boxes  (1, 3, 256)
                 dense_prompt_embeddings=dense_embeddings,  # embeddings of the mask inputs  (1, 256, 64, 64)
                 multimask_output=False,
             )
-
+            # class_prediction=self.classification_head(mask_tokens_out)
+            
             masks = F.interpolate(
                 low_res_masks,
                 (H, W),
@@ -81,11 +99,14 @@ class Model(nn.Module):
             )
             pred_masks.append(masks.squeeze(1))
             ious.append(iou_predictions)
+            # class_predictions.append(class_prediction)
+            
 
-        return pred_masks, ious
+        return pred_masks, ious,class_predictions
 
     def get_predictor(self):
         return SamPredictor(self.model)
     # def get_imgemb(self,images):
     #     image_embeddings = self.model.image_encoder(images)
     #     return image_embeddings
+

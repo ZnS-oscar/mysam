@@ -6,16 +6,16 @@ import segmentation_models_pytorch as smp
 import torch
 import torch.nn.functional as F
 from box import Box
-from config import cfg
+from .config import cfg
 from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
-from losses import DiceLoss
-from losses import FocalLoss
-from losses import BoundaryLoss
-from model import Model
+from .losses import DiceLoss
+from .losses import FocalLoss
+# from .losses import BoundaryLoss
+from .model import Model
 from torch.utils.data import DataLoader
-from utils import AverageMeter
-from utils import calc_iou
+from .utils import AverageMeter
+from .utils import calc_iou
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
@@ -26,11 +26,11 @@ import datetime
 from pathlib import Path
 import math
 from lightning.fabric.strategies import DDPStrategy
-from lora import LoRA_sam
+from .lora import LoRA_sam
 from safetensors.torch import save_file
-from abl import ABL
+from .abl import ABL
 from torch.utils.data import Dataset, DataLoader
-from distill_dataset import load_distill_datasets
+from .distill_dataset import load_distill_datasets
 from tensorboardX import SummaryWriter  
 from torch import distributed as dist
 torch.set_float32_matmul_precision('high')

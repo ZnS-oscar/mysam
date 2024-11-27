@@ -11,9 +11,8 @@ from dataset import load_datasets
 from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
 from losses import DiceLoss
-from losses import FocalLoss
-# from losses import BinaryBoundaryLoss
-# from losses import BoundaryLoss
+from losses import FocalLoss,BinaryBoundaryLoss
+from losses import BoundaryLoss
 from model import Model
 from torch.utils.data import DataLoader
 from utils import AverageMeter
@@ -198,7 +197,7 @@ def validate(fabric: L.Fabric, model: Model, sam_lora: LoRA_sam,val_dataloader: 
 
             t1 = time.time()
             # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-            pred_masks, _ = model(images, bboxes)
+            pred_masks, _,class_predictions = model(images, bboxes)
             t2 = time.time()
 
             
@@ -263,7 +262,8 @@ def train_sam(
 
     focal_loss = FocalLoss()
     dice_loss = DiceLoss()
-    # boundary_loss=BinaryBoundaryLoss()
+    boundary_loss=BinaryBoundaryLoss()
+    classification_loss=torch.nn.CrossEntropyLoss()
 
     for epoch in range(1, cfg.num_epochs+1):
         batch_time = AverageMeter()
@@ -292,35 +292,49 @@ def train_sam(
                 val_time=time.time()-end
             
             images, bboxes, gt_masks,dist_maps,img_name = data
+            gt_class=[]
             batch_size = images.size(0)
             # with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
             try:
-                pred_masks, iou_predictions = model(images, bboxes)
+                pred_masks, iou_predictions,class_predictions = model(images, bboxes)
                 num_masks = sum(len(pred_mask) for pred_mask in pred_masks)
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e):
                     print("CUDA out of memory error caught!")
                     # Optionally free up the cache to avoid further memory issues
-            # torch.cuda.empty_cache()               
+            # torch.cuda.empty_cache()
+           
+                           
             loss_focal = torch.tensor(0., device=fabric.device)
             loss_dice = torch.tensor(0., device=fabric.device)
             loss_iou = torch.tensor(0., device=fabric.device)
             loss_boundary=torch.tensor(0.,device=fabric.device)
-            for pred_mask, gt_mask, iou_prediction in zip(pred_masks, gt_masks, iou_predictions):
+            loss_classification=torch.tensor(0.,device=fabric.device)
+            for pred_mask, gt_mask, iou_prediction,class_prediction in zip(pred_masks, gt_masks, iou_predictions,class_predictions):
+                
+                # if len(gt_mask)==0 or num_masks==0:
+                #     print(f'0 found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
+                
+                    
+                # if(len(pred_masks)!=len(gt_masks)):
+                #     print(f'shape unequal found num_masks{num_masks}  pred_mask {pred_mask.shape} gt_mask {len(gt_mask)}')
+                    
+
                 n_mask_thisimg=len(pred_mask)
                 batch_iou = calc_iou(pred_mask, gt_mask)
                 loss_focal += focal_loss(pred_mask, gt_mask) 
                 loss_dice += dice_loss(pred_mask, gt_mask) 
                 loss_iou += F.mse_loss(iou_prediction, batch_iou, reduction='sum') 
-                # lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask,dist_maps.squeeze(0))
-                # loss_boundary+=lb if lb is not None else 0
-                # if lb is None:
-                #     with open("runs/val/log.txt", 'a') as f:
-                #         f.write(f"found loss boundary is None:{img_name}\n")
-                #         f.flush()
-                #     f.close() 
-            loss_total = 20. * loss_focal + loss_dice + loss_iou/num_masks
-            # +loss_boundary/num_masks
+                lb=boundary_loss(pred_mask.unsqueeze(0),gt_mask,dist_maps.squeeze(0))
+                loss_boundary+=lb if lb is not None else 0
+                if lb is None:
+                    with open("runs/val/log.txt", 'a') as f:
+                        f.write(f"found loss boundary is None:{img_name}\n")
+                        f.flush()
+                    f.close()
+                class_prediction=class_prediction.reshape(len(pred_mask),cfg.num_classes+1)
+                loss_classification+=classification_loss(class_prediction,gt_class)
+            loss_total = 20. * loss_focal + loss_dice + loss_iou/num_masks+loss_boundary/num_masks+loss_classification/num_masks
                 # +loss_boundary
                 # torch.cuda.empty_cache() 
             # if torch.isnan(loss_total) or torch.isnan(loss_focal) or torch.isnan(loss_dice) or torch.isnan(loss_iou):
@@ -348,7 +362,7 @@ def train_sam(
                          f' | Focal Loss [({focal_losses.avg:.4f})]'
                          f' | Dice Loss [({dice_losses.avg:.4f})]'
                          f' | IoU Loss [({iou_losses.avg:.4f})]'
-                        #  f' | Boundary Loss [({boundary_losses.avg:.4f})]'
+                         f' | Boundary Loss [({boundary_losses.avg:.4f})]'
                          f' | Total Loss [({total_losses.avg:.4f})]')
 
 
@@ -445,15 +459,15 @@ def main(cfg: Box) -> None:
     
 
 
-    current_memory = torch.cuda.memory_allocated()
-    torch.cuda.reset_peak_memory_stats()
-    validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
-    additional_memory = torch.cuda.memory_allocated() - current_memory
-    peak_memory = torch.cuda.max_memory_allocated()
-    additional_peak_memory = peak_memory - current_memory
-    print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
-    print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
-    print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
+    # current_memory = torch.cuda.memory_allocated()
+    # torch.cuda.reset_peak_memory_stats()
+    # validate(fabric, model, sam_lora,val_data, epoch=-1,upiter=0)
+    # additional_memory = torch.cuda.memory_allocated() - current_memory
+    # peak_memory = torch.cuda.max_memory_allocated()
+    # additional_peak_memory = peak_memory - current_memory
+    # print(f"model memory used:{(current_memory-init_memory)/(1024**3)}GB")
+    # print(f"Additional memory used: {additional_memory / (1024 ** 3)} GB")
+    # print(f"Additional peak memory used: {additional_peak_memory / (1024 ** 3)} GB")
 
 
 

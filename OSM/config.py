@@ -2,13 +2,14 @@ from box import Box
 
 config = {
     'mode':'train',
-    "num_devices": 2,
+    "num_devices": [1],
     "batch_size": 1,
     "num_workers": 8,
     "num_epochs":4,
     "eval_interval": 1,# deprecated
     "eval_interval_iter_percent": 0.25,
     "out_dir": "./runs/train",
+    "num_classes":6,
     "opt": {
         "learning_rate": 1e-4,  # 1e-3
         "weight_decay": 1e-4,
@@ -22,7 +23,7 @@ config = {
         "stu_ckpt":"09232014rightdistilll/train/epoch_003_iter-018735-mse1.41-distillvittiny.pth",
         # "checkpoint":"09221510goodrgbdfreezevit/train/epoch_000000_iter-24996-f10.93-ckpt.pth",
         "checkpoint": "weight/sam_hq_vit_l.pth",
-        # "checkpoint":"09241200unfreez/emoreandbl/train/epoch_000000_iter-06249-f10.86-ckpt.pth",
+        # "checkpoint":"09260955boundarylossadd/train/epoch_000001_iter-18747-f10.92-ckpt.pth",
         # "checkpoint":"09221510goodrgbdfreezevit/train/epoch_000000_iter-24996-f10.93-ckpt.pth",
         # "checkpoint":"09232014rightdistilll/train/epoch_003_iter-018735-mse1.41-distillvittiny.pth",
         # "proj_checkpoint":'09181127/train/epoch-03-iter-24156-f10.92-lora32-proj.safetensors',
@@ -38,6 +39,16 @@ config = {
             "lora":False # the lora should always be False
             
         },
+        # "freeze": {
+        #     "image_encoder": True,
+        #     "prompt_encoder": True,
+        #     "mask_decoder": True,
+        #     "unfreeze_image_encoder_layer":None,
+        #     "unfreeze_image_encoder_norm":None,#[0],
+        #     "preprocess_layers":True,#False,
+        #     "lora":True # the lora should always be False
+            
+        # },
         "lora":{
             'use_lora':True,
             'r':32,
@@ -62,17 +73,17 @@ config = {
         #     "depth_root_dir":"data_zoo/depth/val",
         #     "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
         # },
-        "val": {
-            "root_dir": "data_zoo/imagenet1k_val",
-            "depth_root_dir":"data_zoo/depth/val",
-            "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
-            "imgemb_dir":"data_zoo/imagenet1krgbd_imgemb/val",
-        },
         # "val": {
-        #     "root_dir": "data_zoo/pcbhbb_slice_coco/images",
-        #     "depth_root_dir":"data_zoo/pcbhbb_slice_coco/depth",
-        #     "annotation_file": "data_zoo/pcbhbb_slice_coco/images.json",
+        #     "root_dir": "data_zoo/imagenet1k_val",
+        #     "depth_root_dir":"data_zoo/depth/val",
+        #     "annotation_file": "data_zoo/imagenet_anno/imagenet_val_SAM500.json",
+        #     "imgemb_dir":"data_zoo/imagenet1krgbd_imgemb/val",
         # },
+        "val": {
+            "root_dir": "data_zoo/pcbhbb_slice_coco/images",
+            "depth_root_dir":"data_zoo/pcbhbb_slice_coco/depth",
+            "annotation_file": "data_zoo/pcbhbb_slice_coco/images.json",
+        },
         # "test": {
         #     "root_dir": "data_zoo/imagenet1k_val",
         #     "depth_root_dir":"data_zoo/depth/val",

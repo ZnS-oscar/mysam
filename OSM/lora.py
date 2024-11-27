@@ -1,5 +1,5 @@
 # from src.segment_anything.modeling.sam import Sam
-from sam.modeling import Sam
+from .sam.modeling import Sam
 import numpy as np
 import torch
 import torch.nn as nn

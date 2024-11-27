@@ -9,7 +9,7 @@ from segment_anything.utils.transforms import ResizeLongestSide
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 import random
-from abl import ABL
+from .abl import ABL
 
 IMGMEAN=torch.tensor([0.485, 0.456, 0.406])
 IMGSTD=torch.tensor([0.229, 0.224, 0.225])
@@ -192,7 +192,7 @@ def load_datasets(cfg, img_size):
                       transform=transform)
     train_dataloader = DataLoader(train,
                                   batch_size=cfg.batch_size,
-                                  shuffle=False,
+                                  shuffle=True,
                                   num_workers=cfg.num_workers,
                                   collate_fn=collate_fn)
     val_dataloader = DataLoader(val,

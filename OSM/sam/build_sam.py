@@ -135,6 +135,7 @@ def _build_sam(
     encoder_global_attn_indexes,
     checkpoint=None,
     proj_checkpoint=None,
+    num_classes=5,
 ):
     prompt_embed_dim = 256
     image_size = 1024

@@ -23,6 +23,7 @@ class MaskDecoder(nn.Module):
         activation: Type[nn.Module] = nn.GELU,
         iou_head_depth: int = 3,
         iou_head_hidden_dim: int = 256,
+        num_classes:int=6,
     ) -> None:
         """
         Predicts masks given an image and prompt embeddings, using a
@@ -67,6 +68,7 @@ class MaskDecoder(nn.Module):
         self.iou_prediction_head = MLP(
             transformer_dim, iou_head_hidden_dim, self.num_mask_tokens, iou_head_depth
         )
+        
 
     def forward(
         self,
@@ -143,6 +145,7 @@ class MaskDecoder(nn.Module):
         b, c, h, w = upscaled_embedding.shape
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
+        
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
 

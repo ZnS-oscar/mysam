@@ -12,9 +12,9 @@ from lightning.fabric.fabric import _FabricOptimizer
 from lightning.fabric.loggers import TensorBoardLogger
 from lightning.fabric.strategies import DDPStrategy
 import lightning as L
-from model import Model
+from .model import Model
 from torch.utils.data import DataLoader
-from dataset import load_datasets,load_test_datasets
+from .dataset import load_datasets,load_test_datasets
 # Initialize SAM model on a specific device (GPU)
 cfg=Box({
         "num_gpus":1,
